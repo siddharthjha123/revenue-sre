@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900" role="img" aria-labelledby="title description">
+  <title id="title">Revenue SRE system architecture</title>
+  <desc id="description">Payment events move from merchant checkout and Razorpay into a FastAPI control plane. TrueForge performs read-only investigation and sandbox analysis. Deterministic policy, merchant approval, and an idempotent executor gate recovery actions. Results are stored as audit and recovery outcomes.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#111a32"/>
+    </linearGradient>
+    <linearGradient id="control" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b6cff"/>
+      <stop offset="1" stop-color="#7c4dff"/>
+    </linearGradient>
+    <linearGradient id="safe" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0ea978"/>
+      <stop offset="1" stop-color="#087f68"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000" flood-opacity="0.32"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa8d8"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4adeb1"/>
+    </marker>
+    <style>
+      .heading { font: 700 30px Inter, Segoe UI, sans-serif; fill: #f4f6ff; }
+      .subtitle { font: 400 15px Inter, Segoe UI, sans-serif; fill: #9aa8d8; }
+      .label { font: 650 17px Inter, Segoe UI, sans-serif; fill: #f4f6ff; text-anchor: middle; }
+      .detail { font: 400 13px Inter, Segoe UI, sans-serif; fill: #b9c3e6; text-anchor: middle; }
+      .edge { fill: none; stroke: #9aa8d8; stroke-width: 2; marker-end: url(#arrow); }
+      .safe-edge { fill: none; stroke: #4adeb1; stroke-width: 2.5; marker-end: url(#arrow-green); }
+      .edge-label { font: 600 12px Inter, Segoe UI, sans-serif; fill: #b9c3e6; text-anchor: middle; }
+      .group-label { font: 700 12px Inter, Segoe UI, sans-serif; fill: #7584b7; letter-spacing: 1.8px; }
+    </style>
+  </defs>
+
+  <rect width="1400" height="900" rx="28" fill="url(#background)"/>
+  <text x="60" y="68" class="heading">Revenue SRE — System Architecture</text>
+  <text x="60" y="98" class="subtitle">Evidence-driven incident detection with deterministic, merchant-approved recovery</text>
+
+  <rect x="50" y="135" width="300" height="565" rx="22" fill="#111931" stroke="#2a3764" stroke-width="1.5"/>
+  <text x="76" y="170" class="group-label">PAYMENT SYSTEM</text>
+
+  <rect x="95" y="205" width="210" height="82" rx="14" fill="#18223f" stroke="#3a4876" filter="url(#shadow)"/>
+  <text x="200" y="238" class="label">Customer</text>
+  <text x="200" y="262" class="detail">payment attempt</text>
+
+  <path d="M200 287 L200 329" class="edge"/>
+
+  <rect x="95" y="330" width="210" height="82" rx="14" fill="#18223f" stroke="#3a4876" filter="url(#shadow)"/>
+  <text x="200" y="363" class="label">Merchant checkout</text>
+  <text x="200" y="387" class="detail">order and checkout context</text>
+
+  <path d="M200 412 L200 454" class="edge"/>
+
+  <rect x="95" y="455" width="210" height="92" rx="14" fill="#202b4d" stroke="#596aa3" filter="url(#shadow)"/>
+  <text x="200" y="490" class="label">Razorpay</text>
+  <text x="200" y="516" class="detail">payment source of truth</text>
+
+  <rect x="400" y="135" width="950" height="565" rx="22" fill="#10182e" stroke="#2a3764" stroke-width="1.5"/>
+  <text x="426" y="170" class="group-label">REVENUE SRE CONTROL PLANE</text>
+
+  <rect x="445" y="205" width="240" height="92" rx="14" fill="#18223f" stroke="#3a4876" filter="url(#shadow)"/>
+  <text x="565" y="240" class="label">TrueForge</text>
+  <text x="565" y="265" class="detail">orchestration and sandbox</text>
+
+  <rect x="755" y="205" width="250" height="92" rx="14" fill="#18223f" stroke="#3a4876" filter="url(#shadow)"/>
+  <text x="880" y="240" class="label">Incident analysis</text>
+  <text x="880" y="265" class="detail">metrics, evidence, hypotheses</text>
+
+  <path d="M685 251 L754 251" class="edge"/>
+  <text x="720" y="235" class="edge-label">isolated analysis</text>
+
+  <rect x="1065" y="205" width="240" height="92" rx="14" fill="#18223f" stroke="#3a4876" filter="url(#shadow)"/>
+  <text x="1185" y="240" class="label">Incident &amp; audit store</text>
+  <text x="1185" y="265" class="detail">durable evidence and outcomes</text>
+
+  <rect x="600" y="355" width="260" height="100" rx="16" fill="url(#control)" filter="url(#shadow)"/>
+  <text x="730" y="394" class="label">FastAPI control plane</text>
+  <text x="730" y="420" class="detail" style="fill:#e1e5ff">contracts · tenant boundary · APIs</text>
+
+  <path d="M305 501 C390 501 455 405 599 405" class="edge"/>
+  <text x="430" y="470" class="edge-label">signed events / status</text>
+
+  <path d="M565 297 C565 330 620 340 660 355" class="edge"/>
+  <text x="558" y="331" class="edge-label">structured proposal</text>
+
+  <path d="M880 297 C880 330 835 342 800 355" class="edge"/>
+  <path d="M860 405 C960 405 1030 300 1100 297" class="edge"/>
+  <text x="985" y="372" class="edge-label">append evidence</text>
+
+  <rect x="440" y="535" width="230" height="92" rx="14" fill="#18223f" stroke="#3a4876" filter="url(#shadow)"/>
+  <text x="555" y="570" class="label">Deterministic policy</text>
+  <text x="555" y="595" class="detail">limits · expiry · eligibility</text>
+
+  <rect x="730" y="535" width="230" height="92" rx="14" fill="url(#safe)" filter="url(#shadow)"/>
+  <text x="845" y="570" class="label">Merchant approval</text>
+  <text x="845" y="595" class="detail" style="fill:#d9fff4">immutable plan hash</text>
+
+  <rect x="1020" y="535" width="230" height="92" rx="14" fill="#18223f" stroke="#3a4876" filter="url(#shadow)"/>
+  <text x="1135" y="570" class="label">Recovery executor</text>
+  <text x="1135" y="595" class="detail">idempotent bounded action</text>
+
+  <path d="M680 455 C660 493 620 510 575 535" class="safe-edge"/>
+  <path d="M670 581 L729 581" class="safe-edge"/>
+  <path d="M960 581 L1019 581" class="safe-edge"/>
+
+  <rect x="455" y="755" width="240" height="88" rx="14" fill="#18223f" stroke="#3a4876" filter="url(#shadow)"/>
+  <text x="575" y="789" class="label">Razorpay MCP</text>
+  <text x="575" y="814" class="detail">read and approved tools</text>
+
+  <rect x="835" y="755" width="270" height="88" rx="14" fill="#18223f" stroke="#3a4876" filter="url(#shadow)"/>
+  <text x="970" y="789" class="label">Measured outcome</text>
+  <text x="970" y="814" class="detail">recovered amount and exceptions</text>
+
+  <path d="M1135 627 C1135 700 790 715 650 755" class="safe-edge"/>
+  <text x="960" y="700" class="edge-label">approved tool call</text>
+
+  <path d="M455 799 C315 799 250 650 250 547" class="safe-edge"/>
+  <text x="332" y="750" class="edge-label">execute in test mode</text>
+
+  <path d="M305 520 C500 670 770 690 930 755" class="edge"/>
+  <text x="680" y="690" class="edge-label">webhook / status verification</text>
+
+  <path d="M970 755 C1000 700 1110 670 1170 627" class="edge"/>
+  <path d="M1105 755 C1200 710 1210 350 1200 297" class="edge"/>
+
+  <rect x="50" y="750" width="300" height="93" rx="16" fill="#10182e" stroke="#2a3764"/>
+  <circle cx="82" cy="784" r="7" fill="#4adeb1"/>
+  <text x="101" y="789" class="subtitle">Approval-gated execution path</text>
+  <circle cx="82" cy="816" r="7" fill="#9aa8d8"/>
+  <text x="101" y="821" class="subtitle">Evidence and status path</text>
+</svg>
