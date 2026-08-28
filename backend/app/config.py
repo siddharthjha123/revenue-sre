@@ -39,6 +39,20 @@ class Settings(BaseSettings):
     worker_lease_seconds: int = Field(default=60, ge=5, le=3600)
     worker_retry_base_seconds: int = Field(default=5, ge=1, le=3600)
     worker_retry_cap_seconds: int = Field(default=300, ge=1, le=86_400)
+    # An empty environment value means "generate a process-unique ID".
+    worker_id: str | None = Field(default=None, max_length=128)
+    worker_poll_interval_seconds: float = Field(default=1.0, gt=0, le=60)
+    worker_loop_error_backoff_seconds: float = Field(default=5.0, gt=0, le=300)
+    worker_shutdown_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    worker_heartbeat_interval_seconds: float = Field(default=5.0, gt=0, le=60)
+    worker_health_max_staleness_seconds: float = Field(default=20.0, gt=0, le=300)
+    worker_heartbeat_path: str = Field(
+        default=".runtime/revenue-sre-worker.heartbeat",
+        min_length=1,
+        max_length=1024,
+    )
+    worker_metrics_host: str = Field(default="127.0.0.1", min_length=1, max_length=255)
+    worker_metrics_port: int = Field(default=9101, ge=0, le=65_535)
     execution_enabled: bool = False
 
 

@@ -18,5 +18,30 @@ services:
       retries: 10
       start_period: 5s
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["python", "-m", "backend.app.workers"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://revenue_sre:replace-with-a-local-password@db:5432/revenue_sre}
+      WORKER_HEARTBEAT_PATH: /app/.runtime/revenue-sre-worker.heartbeat
+      WORKER_METRICS_HOST: 0.0.0.0
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:9101:9101"
+    stop_grace_period: 35s
+    healthcheck:
+      test: ["CMD", "python", "-m", "backend.app.workers.healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
 volumes:
   postgres_data:

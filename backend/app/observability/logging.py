@@ -15,6 +15,8 @@ SAFE_LOG_FIELDS = (
     "job_id",
     "attempt_count",
     "error_code",
+    "worker_id",
+    "worker_status",
 )
 
 

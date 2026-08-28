@@ -186,10 +186,14 @@ Permanent normalization errors are dead-lettered immediately. Unexpected
 runtime failures are retryable until `WORKER_MAX_ATTEMPTS` is reached. Only
 sanitized error codes and messages are persisted.
 
-`WebhookJobWorker.run_once()` currently claims and processes at most one job.
-The repository does not yet include a continuous worker process entrypoint;
-deployment must not assume that importing the FastAPI application starts the
-worker.
+`WebhookJobWorker.run_once()` claims and processes at most one job. The
+independent runtime repeatedly invokes it, waits without busy-polling when the
+queue is empty, and stops claiming new work after SIGINT or SIGTERM. An active
+job receives a bounded grace period to finish; if that period expires, its
+transaction is cancelled and its durable lease later makes it reclaimable.
+
+The FastAPI process never starts this loop implicitly. API and worker processes
+can therefore restart, scale, and fail independently.
 
 ## Payment normalization
 
@@ -300,6 +304,15 @@ Prometheus metrics are exposed at `/metrics`:
 - `webhook_processing_failures_total`
 - `webhook_processing_duration_seconds`
 
+The independent worker exposes its Prometheus endpoint on its configured
+metrics port (9101 by default) and additionally reports:
+
+- `worker_polls_total`
+- `worker_jobs_processed_total`
+- `worker_loop_errors_total`
+- `worker_last_success_timestamp_seconds`
+- `worker_runtime_up`
+
 `/metrics` is excluded from the public OpenAPI schema and must be restricted to
 the private operational network at deployment.
 
@@ -318,6 +331,15 @@ Relevant environment variables:
 | `WORKER_LEASE_SECONDS` | Duration of exclusive worker ownership |
 | `WORKER_RETRY_BASE_SECONDS` | Initial retry delay |
 | `WORKER_RETRY_CAP_SECONDS` | Maximum retry delay |
+| `WORKER_ID` | Optional stable process identity; generated when empty |
+| `WORKER_POLL_INTERVAL_SECONDS` | Empty-queue wait before the next claim |
+| `WORKER_LOOP_ERROR_BACKOFF_SECONDS` | Delay after an unexpected polling failure |
+| `WORKER_SHUTDOWN_TIMEOUT_SECONDS` | Maximum grace period for an active job |
+| `WORKER_HEARTBEAT_INTERVAL_SECONDS` | Frequency of local liveness updates |
+| `WORKER_HEALTH_MAX_STALENESS_SECONDS` | Oldest heartbeat accepted as healthy |
+| `WORKER_HEARTBEAT_PATH` | Process-local heartbeat file used by health checks |
+| `WORKER_METRICS_HOST` | Interface used by the worker metrics server |
+| `WORKER_METRICS_PORT` | Worker metrics port; zero disables the server |
 
 Secrets belong in the local `.env` file or the deployment secret manager. The
 local `.env` file must never be committed.
@@ -341,12 +363,50 @@ tenant isolation, normalization, unknown payment methods, state ordering,
 worker retry/dead-letter behavior, safe logging, metrics, and controlled
 database failures.
 
+## Worker operation and deployment
+
+Run the worker directly from the repository root:
+
+```powershell
+python -m backend.app.workers
+```
+
+An installed package also exposes:
+
+```powershell
+revenue-sre-worker
+```
+
+The command verifies database connectivity before polling. SIGINT (`Ctrl+C`)
+and SIGTERM stop new claims, allow the active transaction to finish within the
+configured grace period, remove the heartbeat, close the metrics server, and
+dispose of pooled database connections.
+
+The standalone health command returns exit code zero only when the worker
+heartbeat is recent and PostgreSQL accepts a query:
+
+```powershell
+python -m backend.app.workers.healthcheck
+```
+
+For the container deployment, set `DATABASE_URL_DOCKER` to the PostgreSQL URL
+using hostname `db`. Reserved password characters must be URL-encoded. Then:
+
+```powershell
+docker compose up -d db worker
+docker compose ps
+docker compose logs -f worker
+```
+
+The worker container uses the same application image as other backend
+processes, runs as a non-root user, publishes metrics only on local port 9101,
+and uses the heartbeat/database command as its Docker health check.
+
 ## Current boundary
 
 This pipeline provides authenticated ingestion and durable payment-state
 projection. It does not yet provide:
 
-- a continuous worker command or service definition
 - payment-failure aggregation and incident creation
 - root-cause hypothesis generation
 - recovery plan generation
