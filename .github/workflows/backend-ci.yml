@@ -12,6 +12,22 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: revenue_sre
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: revenue_sre_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U revenue_sre -d revenue_sre_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://revenue_sre:ci-only-password@localhost:5432/revenue_sre_test
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -30,6 +46,12 @@ jobs:
 
       - name: Check formatting
         run: python -m ruff format --check .
+
+      - name: Apply database migrations
+        run: python -m alembic upgrade head
+
+      - name: Detect model and migration drift
+        run: python -m alembic check
 
       - name: Test
         run: python -m pytest -v
