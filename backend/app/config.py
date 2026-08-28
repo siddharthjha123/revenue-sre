@@ -6,8 +6,9 @@ must never be committed to source control.
 
 from functools import lru_cache
 from typing import Literal
+from uuid import UUID
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +28,17 @@ class Settings(BaseSettings):
     razorpay_key_id: str | None = None
     razorpay_key_secret: SecretStr | None = None
     razorpay_webhook_secret: SecretStr | None = None
+    merchant_id: UUID | None = None
+    razorpay_account_id: str | None = Field(
+        default=None,
+        pattern=r"^acc_[A-Za-z0-9]+$",
+        max_length=64,
+    )
+    webhook_max_body_bytes: int = Field(default=262_144, ge=1024, le=10_485_760)
+    worker_max_attempts: int = Field(default=5, ge=1, le=20)
+    worker_lease_seconds: int = Field(default=60, ge=5, le=3600)
+    worker_retry_base_seconds: int = Field(default=5, ge=1, le=3600)
+    worker_retry_cap_seconds: int = Field(default=300, ge=1, le=86_400)
     execution_enabled: bool = False
 
 
