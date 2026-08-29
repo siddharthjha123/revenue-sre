@@ -36,6 +36,8 @@ class AuditEventType(StrEnum):
     INCIDENT_CREATED = "incident_created"
     ANALYSIS_COMPLETED = "analysis_completed"
     PLAN_PROPOSED = "plan_proposed"
+    POLICY_VALIDATED = "policy_validated"
+    APPROVAL_REQUESTED = "approval_requested"
     PLAN_APPROVED = "plan_approved"
     PLAN_REJECTED = "plan_rejected"
     ACTION_EXECUTED = "action_executed"

@@ -1,0 +1,122 @@
+"""Tenant-scoped recovery proposal, approval, and audit persistence."""
+
+from collections.abc import Sequence
+from datetime import datetime
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ...schemas.audit import ApprovalDecisionType
+from ..models.recovery import (
+    ApprovalRecord,
+    AuditRecord,
+    RecoveryProposal,
+    RecoveryProposalAction,
+)
+
+
+class RecoveryRepository:
+    """Persistence operations; the service owns policy and transaction scope."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add_proposal(
+        self,
+        proposal: RecoveryProposal,
+        actions: Sequence[RecoveryProposalAction],
+    ) -> RecoveryProposal:
+        self._session.add(proposal)
+        self._session.add_all(actions)
+        await self._session.flush()
+        return proposal
+
+    async def get_proposal(
+        self,
+        merchant_id: UUID,
+        proposal_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> RecoveryProposal | None:
+        statement = select(RecoveryProposal).where(
+            RecoveryProposal.id == proposal_id,
+            RecoveryProposal.merchant_id == merchant_id,
+        )
+        if for_update:
+            statement = statement.with_for_update()
+        return await self._session.scalar(statement)
+
+    async def list_actions(self, proposal_id: UUID) -> Sequence[RecoveryProposalAction]:
+        result = await self._session.scalars(
+            select(RecoveryProposalAction)
+            .where(RecoveryProposalAction.proposal_id == proposal_id)
+            .order_by(RecoveryProposalAction.id)
+        )
+        return result.all()
+
+    async def has_recent_proposal(
+        self,
+        merchant_id: UUID,
+        incident_id: UUID,
+        *,
+        since: datetime,
+    ) -> bool:
+        proposal_id = await self._session.scalar(
+            select(RecoveryProposal.id)
+            .where(
+                RecoveryProposal.merchant_id == merchant_id,
+                RecoveryProposal.incident_id == incident_id,
+                RecoveryProposal.created_at >= since,
+            )
+            .limit(1)
+        )
+        return proposal_id is not None
+
+    async def get_decision(self, proposal_id: UUID) -> ApprovalRecord | None:
+        return await self._session.scalar(
+            select(ApprovalRecord).where(ApprovalRecord.proposal_id == proposal_id)
+        )
+
+    async def add_decision(
+        self,
+        *,
+        proposal: RecoveryProposal,
+        decision: ApprovalDecisionType,
+        decided_by: str,
+        decided_at: datetime,
+    ) -> ApprovalRecord:
+        record = ApprovalRecord(
+            merchant_id=proposal.merchant_id,
+            proposal_id=proposal.id,
+            incident_id=proposal.incident_id,
+            decision=decision,
+            decided_by=decided_by,
+            decided_at=decided_at,
+            plan_hash=proposal.content_hash,
+        )
+        self._session.add(record)
+        await self._session.flush()
+        return record
+
+    async def add_audit(self, record: AuditRecord) -> AuditRecord:
+        self._session.add(record)
+        await self._session.flush()
+        return record
+
+    async def list_audit(
+        self,
+        merchant_id: UUID,
+        *,
+        incident_id: UUID | None = None,
+        limit: int = 200,
+    ) -> Sequence[AuditRecord]:
+        statement = select(AuditRecord).where(AuditRecord.merchant_id == merchant_id)
+        if incident_id is not None:
+            statement = statement.where(AuditRecord.incident_id == incident_id)
+        result = await self._session.scalars(
+            statement.order_by(AuditRecord.occurred_at, AuditRecord.id).limit(
+                min(max(limit, 1), 500)
+            )
+        )
+        return result.all()

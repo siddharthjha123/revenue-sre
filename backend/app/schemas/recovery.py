@@ -108,3 +108,78 @@ class PolicyDecision(BaseModel):
 
     allowed: bool
     reasons: tuple[str, ...] = ()
+    policy_version: str = "recovery-policy-v1"
+
+
+class RecoveryActionCreate(BaseModel):
+    """Client-supplied action fields; the server assigns action identity."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    payment_id: RazorpayPaymentId
+    action_type: RecoveryActionType
+    amount_subunits: int = Field(gt=0)
+    rationale: str = Field(min_length=1, max_length=1000)
+    requires_approval: bool = True
+
+
+class RecoveryProposalCreate(BaseModel):
+    """Merchant- or agent-authored proposal submitted for deterministic review."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    actions: list[RecoveryActionCreate] = Field(min_length=1, max_length=50)
+    currency: CurrencyCode = "INR"
+    maximum_customer_contacts: int = Field(default=1, ge=0, le=3)
+    expires_at: AwareDatetime
+    created_by: str = Field(min_length=1, max_length=256)
+
+
+class RecoveryActionResponse(RecoveryAction):
+    """Persisted proposal action."""
+
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+
+class RecoveryProposalResponse(BaseModel):
+    """Persisted proposal and deterministic policy result."""
+
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    proposal_id: UUID
+    merchant_id: UUID
+    incident_id: UUID
+    status: RecoveryPlanStatus
+    actions: list[RecoveryActionResponse]
+    total_amount_subunits: int
+    currency: CurrencyCode
+    maximum_customer_contacts: int
+    expires_at: AwareDatetime
+    content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    policy_allowed: bool
+    policy_reasons: list[str]
+    policy_version: str
+    created_by: str
+    created_at: AwareDatetime
+
+
+class ProposalDecisionRequest(BaseModel):
+    """Actor identity attached to an immutable merchant decision."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    decided_by: str = Field(min_length=1, max_length=256)
+
+
+class ProposalDecisionResponse(BaseModel):
+    """Immutable approval or rejection result."""
+
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    approval_id: UUID
+    proposal_id: UUID
+    incident_id: UUID
+    decision: str
+    decided_by: str
+    decided_at: AwareDatetime
+    plan_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
