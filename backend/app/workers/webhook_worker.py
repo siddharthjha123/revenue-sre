@@ -20,7 +20,8 @@ from ..observability.metrics import (
     WEBHOOK_PROCESSING_DURATION_SECONDS,
     WEBHOOK_PROCESSING_FAILURES_TOTAL,
 )
-from ..services.event_normalizer import PaymentEventNormalizer, PaymentNormalizationError
+from ..services.event_normalizer import PaymentNormalizationError
+from ..services.payment_event_pipeline import PaymentEventPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ class WebhookJobWorker:
         self._session_factory = session_factory
         # Payment normalization is the production default. Tests and future
         # job types can still inject another handler explicitly.
-        self._handler = handler or PaymentEventNormalizer()
+        self._handler = handler or PaymentEventPipeline()
         self._worker_id = worker_id[:128]
         self._lease_seconds = lease_seconds
         self._retry_base_seconds = retry_base_seconds
