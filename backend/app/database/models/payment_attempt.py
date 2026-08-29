@@ -83,6 +83,8 @@ class PaymentAttempt(Base):
         ),
         nullable=False,
     )
+    bank: Mapped[str | None] = mapped_column(String(64))
+    wallet: Mapped[str | None] = mapped_column(String(64))
     captured: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     international: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 

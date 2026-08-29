@@ -114,6 +114,8 @@ def normalize_payment_event(event: WebhookEvent) -> PaymentAttemptResponse:
                 "currency": payment.get("currency"),
                 "status": raw_status,
                 "method": _payment_method(payment.get("method")),
+                "bank": payment.get("bank"),
+                "wallet": payment.get("wallet"),
                 "captured": payment.get("captured", False),
                 "international": payment.get("international", False),
                 "error_code": payment.get("error_code"),
@@ -166,6 +168,8 @@ class PaymentEventNormalizer:
                     currency=normalized.currency,
                     status=normalized.status,
                     method=normalized.method,
+                    bank=normalized.bank,
+                    wallet=normalized.wallet,
                     captured=normalized.captured,
                     international=normalized.international,
                     error_code=normalized.error_code,
@@ -225,6 +229,8 @@ class PaymentEventNormalizer:
         current.order_id = incoming.order_id
         current.status = incoming.status
         current.method = incoming.method
+        current.bank = incoming.bank
+        current.wallet = incoming.wallet
         current.captured = incoming.captured
         current.international = incoming.international
         current.error_code = incoming.error_code
