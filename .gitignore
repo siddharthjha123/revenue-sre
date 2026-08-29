@@ -21,6 +21,8 @@ venv/
 *.sqlite
 *.sqlite3
 logs/
+.runtime/
+.local/
 
 # Editors and operating systems
 .idea/

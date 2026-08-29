@@ -1,6 +1,7 @@
 """Contracts for isolated failures and grouped revenue incidents."""
 
 from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
@@ -78,3 +79,46 @@ class IncidentResponse(IncidentBase):
     status: IncidentStatus = IncidentStatus.OPEN
     started_at: AwareDatetime
     ended_at: AwareDatetime | None = None
+
+
+class IncidentEvidenceResponse(BaseModel):
+    """Persisted evidence safe to expose to the owning merchant."""
+
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    evidence_id: UUID
+    kind: EvidenceKind
+    summary: str
+    source_reference: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    created_at: AwareDatetime
+
+
+class DetectedIncidentResponse(BaseModel):
+    """Detailed deterministic incident metrics returned by the dashboard API."""
+
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    incident_id: UUID
+    merchant_id: UUID
+    incident_type: IncidentType
+    status: IncidentStatus
+    currency: CurrencyCode
+    method: str
+    bank: str | None = None
+    error_reason: str
+    detector_version: str
+    baseline_window_start: AwareDatetime
+    current_window_start: AwareDatetime
+    current_window_end: AwareDatetime
+    baseline_attempt_count: int = Field(ge=0)
+    baseline_failure_count: int = Field(ge=0)
+    current_attempt_count: int = Field(ge=0)
+    current_failure_count: int = Field(ge=0)
+    baseline_failure_rate: float = Field(ge=0, le=1)
+    current_failure_rate: float = Field(ge=0, le=1)
+    revenue_at_risk_subunits: int = Field(ge=0)
+    confidence: float = Field(ge=0, le=1)
+    opened_at: AwareDatetime
+    last_detected_at: AwareDatetime
+    evidence: list[IncidentEvidenceResponse] = Field(default_factory=list)

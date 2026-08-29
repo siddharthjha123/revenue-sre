@@ -19,6 +19,10 @@ dependencies = [
     "uvicorn[standard]>=0.34,<1",
 ]
 
+[project.scripts]
+revenue-sre-worker = "backend.app.workers.__main__:main"
+revenue-sre-worker-healthcheck = "backend.app.workers.healthcheck:main"
+
 [project.optional-dependencies]
 dev = [
     "httpx>=0.28,<1",

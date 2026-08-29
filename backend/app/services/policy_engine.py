@@ -4,9 +4,89 @@ The language model may recommend actions, but it cannot authorize them. This
 deterministic layer is the boundary between reasoning and financial execution.
 """
 
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
-from ..schemas.recovery import PolicyDecision, RecoveryPlan, RecoveryPlanStatus
+from ..schemas.incident import IncidentStatus
+from ..schemas.recovery import (
+    PolicyDecision,
+    RecoveryActionType,
+    RecoveryPlan,
+    RecoveryPlanStatus,
+)
+
+POLICY_VERSION = "recovery-policy-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class ProposalPolicyContext:
+    """Trusted facts used to validate an untrusted proposal."""
+
+    incident_status: IncidentStatus
+    incident_currency: str
+    incident_money_at_risk_subunits: int
+    eligible_payment_ids: frozenset[str]
+    maximum_plan_amount_subunits: int
+    maximum_actions: int
+    maximum_plan_lifetime_minutes: int
+    maximum_customer_contacts: int
+    cooldown_active: bool = False
+
+
+def evaluate_recovery_proposal(
+    plan: RecoveryPlan,
+    context: ProposalPolicyContext,
+    *,
+    now: datetime | None = None,
+    policy_version: str = POLICY_VERSION,
+) -> PolicyDecision:
+    """Fail closed when any bounded proposal rule is violated."""
+
+    checked_at = now or datetime.now(UTC)
+    reasons: list[str] = []
+    if context.incident_status not in {
+        IncidentStatus.OPEN,
+        IncidentStatus.INVESTIGATING,
+    }:
+        reasons.append("incident is not actionable")
+    if plan.currency != context.incident_currency:
+        reasons.append("proposal currency does not match incident currency")
+    if plan.total_amount_subunits > context.maximum_plan_amount_subunits:
+        reasons.append("proposal exceeds the configured amount limit")
+    if plan.total_amount_subunits > context.incident_money_at_risk_subunits:
+        reasons.append("proposal exceeds incident money at risk")
+    if len(plan.actions) > context.maximum_actions:
+        reasons.append("proposal exceeds the action rate limit")
+    if plan.maximum_customer_contacts > context.maximum_customer_contacts:
+        reasons.append("proposal exceeds the customer contact limit")
+    if plan.expires_at <= checked_at:
+        reasons.append("recovery plan has expired")
+    if plan.expires_at > checked_at + timedelta(minutes=context.maximum_plan_lifetime_minutes):
+        reasons.append("recovery plan lifetime exceeds the configured limit")
+    if context.cooldown_active:
+        reasons.append("incident proposal cooldown is active")
+    if any(action.payment_id not in context.eligible_payment_ids for action in plan.actions):
+        reasons.append("proposal includes an ineligible or already-paid payment")
+    if any(not action.requires_approval for action in plan.actions):
+        reasons.append("every recovery action requires merchant approval")
+    allowed_actions = {
+        RecoveryActionType.ALLOW_CUSTOMER_RETRY,
+        RecoveryActionType.CREATE_PAYMENT_LINK,
+        RecoveryActionType.ENGINEERING_ESCALATION,
+        RecoveryActionType.MANUAL_REVIEW,
+    }
+    if any(action.action_type not in allowed_actions for action in plan.actions):
+        reasons.append("proposal contains an action unavailable in this release")
+    action_keys = {(action.payment_id, action.action_type) for action in plan.actions}
+    if len(action_keys) != len(plan.actions):
+        reasons.append("proposal contains duplicate payment actions")
+    if not plan.approval_required:
+        reasons.append("merchant approval is mandatory")
+    return PolicyDecision(
+        allowed=not reasons,
+        reasons=tuple(reasons),
+        policy_version=policy_version,
+    )
 
 
 def evaluate_recovery_plan(plan: RecoveryPlan, *, execution_enabled: bool) -> PolicyDecision:

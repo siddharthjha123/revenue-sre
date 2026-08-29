@@ -77,6 +77,8 @@ class PaymentAttemptBase(BaseModel):
     )
     currency: CurrencyCode
     method: PaymentMethod
+    bank: str | None = Field(default=None, max_length=64)
+    wallet: str | None = Field(default=None, max_length=64)
     checkout_version: str | None = Field(
         default=None,
         max_length=64,
