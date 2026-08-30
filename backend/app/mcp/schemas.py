@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
+from ..schemas.audit import AuditActorType, AuditEventType
 from ..schemas.incident import EvidenceKind, IncidentStatus, IncidentType
 from ..schemas.payment import CurrencyCode
 
@@ -61,3 +62,55 @@ class IncidentInvestigation(BaseModel):
 
     incident: IncidentSummary
     evidence: list[EvidenceItem]
+
+
+class VerificationCheck(BaseModel):
+    """One safe equality check produced by the fallback verifier."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    passed: bool
+
+
+class IncidentVerification(BaseModel):
+    """Truthful non-Daytona verification result for degraded local demos."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    incident_id: UUID
+    verified: bool
+    verification_runtime: str = "revenue_sre_mcp_fallback"
+    native_trueforge_sandbox_used: bool = False
+    baseline_failure_rate: float = Field(ge=0, le=1)
+    current_failure_rate: float = Field(ge=0, le=1)
+    failure_rate_increase: float = Field(ge=-1, le=1)
+    failed_payment_count: int = Field(ge=0)
+    revenue_at_risk_subunits: int = Field(ge=0)
+    evidence_ids: list[UUID]
+    checks: list[VerificationCheck]
+    limitations: list[str]
+
+
+class AgentAuditEvent(BaseModel):
+    """PII-safe material event shown to the investigation agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    audit_id: UUID
+    incident_id: UUID
+    proposal_id: UUID | None = None
+    event_type: AuditEventType
+    actor_type: AuditActorType
+    actor_id: str
+    occurred_at: AwareDatetime
+    details: dict[str, Any]
+
+
+class IncidentAuditTimeline(BaseModel):
+    """Append-only incident timeline for agent explanation and demo visibility."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    incident_id: UUID
+    events: list[AgentAuditEvent]

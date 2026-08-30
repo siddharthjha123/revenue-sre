@@ -81,6 +81,7 @@ class RecoveryPlan(BaseModel):
     plan_id: UUID = Field(default_factory=uuid4)
     merchant_id: UUID
     incident_id: UUID
+    evidence_ids: list[UUID] = Field(default_factory=list, max_length=100)
     actions: list[RecoveryAction] = Field(min_length=1)
     total_amount_subunits: int = Field(gt=0)
     currency: CurrencyCode = "INR"
@@ -98,6 +99,8 @@ class RecoveryPlan(BaseModel):
             raise ValueError("all Day 1 recovery actions must require approval")
         if not self.approval_required:
             raise ValueError("recovery plans must require merchant approval")
+        if len(set(self.evidence_ids)) != len(self.evidence_ids):
+            raise ValueError("evidence_ids must not contain duplicates")
         return self
 
 
@@ -129,6 +132,7 @@ class RecoveryProposalCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     actions: list[RecoveryActionCreate] = Field(min_length=1, max_length=50)
+    evidence_ids: list[UUID] = Field(default_factory=list, max_length=100)
     currency: CurrencyCode = "INR"
     maximum_customer_contacts: int = Field(default=1, ge=0, le=3)
     expires_at: AwareDatetime
@@ -149,6 +153,7 @@ class RecoveryProposalResponse(BaseModel):
     proposal_id: UUID
     merchant_id: UUID
     incident_id: UUID
+    evidence_ids: list[UUID]
     status: RecoveryPlanStatus
     actions: list[RecoveryActionResponse]
     total_amount_subunits: int
@@ -161,6 +166,8 @@ class RecoveryProposalResponse(BaseModel):
     policy_version: str
     created_by: str
     created_at: AwareDatetime
+    approval_required: bool = True
+    execution_performed: bool = False
 
 
 class ProposalDecisionRequest(BaseModel):

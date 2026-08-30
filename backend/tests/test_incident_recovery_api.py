@@ -75,6 +75,14 @@ async def test_incident_proposal_approval_and_audit_endpoints(api_context) -> No
     proposal = proposal_response.json()
     assert proposal["policy_allowed"] is True
     assert proposal["status"] == "pending_approval"
+    assert len(proposal["evidence_ids"]) == 4
+
+    get_proposal_response = await client.get(
+        f"/proposals/{proposal['proposal_id']}",
+        headers=headers,
+    )
+    assert get_proposal_response.status_code == 200
+    assert get_proposal_response.json()["content_hash"] == proposal["content_hash"]
 
     approval_response = await client.post(
         f"/proposals/{proposal['proposal_id']}/approve",
@@ -98,6 +106,76 @@ async def test_incident_endpoint_rejects_another_merchant(api_context) -> None:
     response = await client.get(
         f"/incidents/{incident_id}",
         headers={"X-Merchant-Id": str(MERCHANT_B)},
+    )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_active_incident_proposal_is_null_before_agent_creation(api_context) -> None:
+    client, incident_id = api_context
+
+    response = await client.get(
+        f"/incidents/{incident_id}/proposal",
+        headers={"X-Merchant-Id": str(MERCHANT_A)},
+    )
+
+    assert response.status_code == 200
+    assert response.json() is None
+
+
+@pytest.mark.asyncio
+async def test_incident_commander_chat_is_evidence_grounded_and_read_only(api_context) -> None:
+    client, incident_id = api_context
+    headers = {"X-Merchant-Id": str(MERCHANT_A)}
+
+    response = await client.post(
+        f"/incidents/{incident_id}/commander/chat",
+        headers=headers,
+        json={"message": "How was revenue at risk calculated?"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "₹600" in payload["answer"]
+    assert payload["evidence_count"] == 4
+    assert payload["evidence_verified"] is True
+    assert "cannot execute" in payload["safety_notice"].lower()
+
+    proposal_response = await client.get(
+        f"/incidents/{incident_id}/proposal",
+        headers=headers,
+    )
+    assert proposal_response.json() is None
+
+
+@pytest.mark.asyncio
+async def test_incident_commander_chat_handles_greetings_without_repeating_summary(
+    api_context,
+) -> None:
+    client, incident_id = api_context
+
+    response = await client.post(
+        f"/incidents/{incident_id}/commander/chat",
+        headers={"X-Merchant-Id": str(MERCHANT_A)},
+        json={"message": "hii"},
+    )
+
+    assert response.status_code == 200
+    answer = response.json()["answer"]
+    assert answer.startswith("Hi!")
+    assert "HDFC UPI incident" in answer
+    assert "Ask me about the evidence" not in answer
+
+
+@pytest.mark.asyncio
+async def test_incident_commander_chat_preserves_merchant_isolation(api_context) -> None:
+    client, incident_id = api_context
+
+    response = await client.post(
+        f"/incidents/{incident_id}/commander/chat",
+        headers={"X-Merchant-Id": str(MERCHANT_B)},
+        json={"message": "Summarize this incident."},
     )
 
     assert response.status_code == 403

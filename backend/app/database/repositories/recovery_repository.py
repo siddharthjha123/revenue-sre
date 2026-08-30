@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...schemas.audit import ApprovalDecisionType
+from ...schemas.recovery import RecoveryPlanStatus
 from ..models.recovery import (
     ApprovalRecord,
     AuditRecord,
@@ -72,6 +73,29 @@ class RecoveryRepository:
             .limit(1)
         )
         return proposal_id is not None
+
+    async def get_active_incident_proposal(
+        self,
+        merchant_id: UUID,
+        incident_id: UUID,
+    ) -> RecoveryProposal | None:
+        """Return the latest proposal that still represents active authority."""
+
+        return await self._session.scalar(
+            select(RecoveryProposal)
+            .where(
+                RecoveryProposal.merchant_id == merchant_id,
+                RecoveryProposal.incident_id == incident_id,
+                RecoveryProposal.status.in_(
+                    [
+                        RecoveryPlanStatus.PENDING_APPROVAL,
+                        RecoveryPlanStatus.APPROVED,
+                    ]
+                ),
+            )
+            .order_by(RecoveryProposal.created_at.desc(), RecoveryProposal.id.desc())
+            .limit(1)
+        )
 
     async def get_decision(self, proposal_id: UUID) -> ApprovalRecord | None:
         return await self._session.scalar(

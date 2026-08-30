@@ -26,6 +26,7 @@ class ProposalPolicyContext:
     incident_currency: str
     incident_money_at_risk_subunits: int
     eligible_payment_ids: frozenset[str]
+    eligible_evidence_ids: frozenset[str]
     maximum_plan_amount_subunits: int
     maximum_actions: int
     maximum_plan_lifetime_minutes: int
@@ -67,6 +68,10 @@ def evaluate_recovery_proposal(
         reasons.append("incident proposal cooldown is active")
     if any(action.payment_id not in context.eligible_payment_ids for action in plan.actions):
         reasons.append("proposal includes an ineligible or already-paid payment")
+    if not plan.evidence_ids:
+        reasons.append("proposal must reference incident evidence")
+    elif any(str(item) not in context.eligible_evidence_ids for item in plan.evidence_ids):
+        reasons.append("proposal references evidence outside the incident")
     if any(not action.requires_approval for action in plan.actions):
         reasons.append("every recovery action requires merchant approval")
     allowed_actions = {

@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -241,6 +241,24 @@ class IncidentRepository:
     async def list_evidence(
         self, merchant_id: UUID, incident_id: UUID
     ) -> Sequence[IncidentEvidenceRecord]:
+        """Return evidence for the incident's current detection snapshot.
+
+        Evidence remains append-only in storage for auditability. A rolling
+        detector can update an incident many times, however, so investigation
+        callers must not mix facts from expired windows with the latest metrics.
+        """
+
+        incident = await self.get(merchant_id, incident_id)
+        if incident is None:
+            return []
+        history = await self.list_evidence_history(merchant_id, incident_id)
+        return [item for item in history if _belongs_to_current_snapshot(item, incident)]
+
+    async def list_evidence_history(
+        self, merchant_id: UUID, incident_id: UUID
+    ) -> Sequence[IncidentEvidenceRecord]:
+        """Return the append-only evidence history for audit/debugging use."""
+
         result = await self._session.scalars(
             select(IncidentEvidenceRecord)
             .where(
@@ -250,3 +268,46 @@ class IncidentRepository:
             .order_by(IncidentEvidenceRecord.created_at, IncidentEvidenceRecord.id)
         )
         return result.all()
+
+
+def _belongs_to_current_snapshot(
+    evidence: IncidentEvidenceRecord,
+    incident: Incident,
+) -> bool:
+    details = evidence.details
+    if evidence.kind == EvidenceKind.SANDBOX_METRIC:
+        return (
+            _parse_utc(details.get("current_window_start"))
+            == _as_utc(incident.current_window_start)
+            and _parse_utc(details.get("current_window_end"))
+            == _as_utc(incident.current_window_end)
+            and details.get("current_attempt_count") == incident.current_attempt_count
+            and details.get("current_failure_count") == incident.current_failure_count
+            and details.get("revenue_at_risk_subunits") == incident.revenue_at_risk_subunits
+        )
+    if evidence.kind != EvidenceKind.RAZORPAY_FACT:
+        return False
+    occurred_at = _parse_utc(details.get("provider_event_at"))
+    return (
+        occurred_at is not None
+        and _as_utc(incident.current_window_start)
+        <= occurred_at
+        <= _as_utc(incident.current_window_end)
+        and details.get("currency") == incident.currency
+        and details.get("method") == incident.method
+        and details.get("bank") == incident.bank
+        and details.get("error_reason") == incident.error_reason
+    )
+
+
+def _parse_utc(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return _as_utc(datetime.fromisoformat(value))
+    except ValueError:
+        return None
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
