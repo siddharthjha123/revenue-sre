@@ -14,7 +14,12 @@ from ..database.repositories.incident_repository import IncidentRepository
 from ..database.repositories.recovery_repository import RecoveryRepository
 from ..observability.context import get_correlation_id
 from ..schemas.audit import ApprovalDecisionType, AuditEvent
-from ..schemas.incident import DetectedIncidentResponse, IncidentEvidenceResponse
+from ..schemas.incident import (
+    DetectedIncidentResponse,
+    IncidentCommanderChatRequest,
+    IncidentCommanderChatResponse,
+    IncidentEvidenceResponse,
+)
 from ..schemas.recovery import (
     ProposalDecisionRequest,
     ProposalDecisionResponse,
@@ -27,6 +32,7 @@ from ..services.recovery_service import (
     RecoveryPolicyRejectedError,
     RecoveryService,
 )
+from ..services.incident_commander import answer_incident_question
 from .dependencies import require_merchant
 
 router = APIRouter(tags=["incidents"])
@@ -58,6 +64,30 @@ async def get_incident(
         raise HTTPException(status_code=404, detail="Incident was not found")
     evidence = await repository.list_evidence(merchant_id, incident_id)
     return _incident_response(incident, evidence)
+
+
+@router.post(
+    "/incidents/{incident_id}/commander/chat",
+    response_model=IncidentCommanderChatResponse,
+)
+async def chat_with_incident_commander(
+    incident_id: UUID,
+    request: IncidentCommanderChatRequest,
+    merchant_id: Annotated[UUID, Depends(require_merchant)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> IncidentCommanderChatResponse:
+    """Answer from persisted evidence without allowing chat-driven execution.
+
+    The route is tenant-scoped through ``X-Merchant-Id``. It performs no
+    Razorpay call, creates no proposal, and writes no recovery state.
+    """
+
+    repository = IncidentRepository(session)
+    incident = await repository.get(merchant_id, incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident was not found")
+    evidence = await repository.list_evidence(merchant_id, incident_id)
+    return answer_incident_question(incident, evidence, request.message)
 
 
 @router.post(
@@ -111,6 +141,38 @@ async def get_recovery_proposal(
         )
     except RecoveryNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get(
+    "/incidents/{incident_id}/proposal",
+    response_model=RecoveryProposalResponse | None,
+)
+async def get_active_incident_proposal(
+    incident_id: UUID,
+    merchant_id: Annotated[UUID, Depends(require_merchant)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> RecoveryProposalResponse | None:
+    """Return the current approval-gated proposal for a dashboard incident.
+
+    ``null`` is returned when the agent has not prepared a proposal. This keeps
+    the dashboard read-only until a proposal is explicitly created through the
+    policy-gated workflow.
+    """
+
+    if await IncidentRepository(session).get(merchant_id, incident_id) is None:
+        raise HTTPException(status_code=404, detail="Incident was not found")
+    proposal = await RecoveryRepository(session).get_active_incident_proposal(
+        merchant_id,
+        incident_id,
+    )
+    if proposal is None:
+        return None
+    return await RecoveryService(settings).get_proposal(
+        session,
+        merchant_id=merchant_id,
+        proposal_id=proposal.id,
+    )
 
 
 @router.post(

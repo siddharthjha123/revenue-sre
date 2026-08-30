@@ -1,0 +1,4 @@
+import { Command } from 'lucide-react'
+import { Skeleton } from './ui/Skeleton'
+import './skeleton.css'
+export function DashboardSkeleton(){return <div className="loading-shell" aria-label="Loading Revenue Command Center" aria-busy="true"><aside className="loading-sidebar"><div className="loading-brand"><span><Command/></span><Skeleton className="sk-brand"/></div>{[0,1,2,3].map(i=><Skeleton className="sk-nav" key={i}/>)}<div className="loading-spacer"/><Skeleton className="sk-system"/></aside><main className="loading-main"><div className="loading-header"><div><Skeleton className="sk-title"/><Skeleton className="sk-subtitle"/></div><Skeleton className="sk-refresh"/></div><div className="loading-metrics">{[0,1,2,3].map(i=><Skeleton className="sk-metric" key={i}/>)}</div><div className="loading-workspace"><div><Skeleton className="sk-chart"/><Skeleton className="sk-table"/></div><Skeleton className="sk-commander"/></div></main></div>}
