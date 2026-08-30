@@ -26,13 +26,13 @@ from ..schemas.recovery import (
     RecoveryProposalCreate,
     RecoveryProposalResponse,
 )
+from ..services.incident_commander import answer_incident_question
 from ..services.recovery_service import (
     RecoveryConflictError,
     RecoveryNotFoundError,
     RecoveryPolicyRejectedError,
     RecoveryService,
 )
-from ..services.incident_commander import answer_incident_question
 from .dependencies import require_merchant
 
 router = APIRouter(tags=["incidents"])

@@ -150,6 +150,25 @@ async def test_incident_commander_chat_is_evidence_grounded_and_read_only(api_co
 
 
 @pytest.mark.asyncio
+async def test_incident_commander_chat_handles_greetings_without_repeating_summary(
+    api_context,
+) -> None:
+    client, incident_id = api_context
+
+    response = await client.post(
+        f"/incidents/{incident_id}/commander/chat",
+        headers={"X-Merchant-Id": str(MERCHANT_A)},
+        json={"message": "hii"},
+    )
+
+    assert response.status_code == 200
+    answer = response.json()["answer"]
+    assert answer.startswith("Hi!")
+    assert "HDFC UPI incident" in answer
+    assert "Ask me about the evidence" not in answer
+
+
+@pytest.mark.asyncio
 async def test_incident_commander_chat_preserves_merchant_isolation(api_context) -> None:
     client, incident_id = api_context
 
@@ -159,4 +178,4 @@ async def test_incident_commander_chat_preserves_merchant_isolation(api_context)
         json={"message": "Summarize this incident."},
     )
 
-    assert response.status_code == 404
+    assert response.status_code == 403

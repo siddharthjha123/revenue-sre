@@ -39,52 +39,76 @@ def answer_incident_question(
     current_rate = _percent(incident.current_failure_rate)
     baseline_rate = _percent(incident.baseline_failure_rate)
     confirmed = [
-        f"{incident.current_failure_count} of {incident.current_attempt_count} current-window attempts failed.",
+        (
+            f"{incident.current_failure_count} of {incident.current_attempt_count} "
+            "current-window attempts failed."
+        ),
         f"Failure rate moved from {baseline_rate} to {current_rate}.",
         f"{money} is at risk across the persisted failed-payment evidence.",
         f"The provider boundary reported {incident.error_reason} for {bank} {method} payments.",
     ]
     hypotheses = [
-        f"{bank} or its {method} path may be degraded; provider-side confirmation is still required.",
-        "A broader payment-network timeout is possible if the same signature appears across providers.",
-        "A merchant regression is less likely from this evidence, but has not been independently disproven.",
+        (
+            f"{bank} or its {method} path may be degraded; provider-side confirmation "
+            "is still required."
+        ),
+        (
+            "A broader payment-network timeout is possible if the same signature "
+            "appears across providers."
+        ),
+        (
+            "A merchant regression is less likely from this evidence, but has not "
+            "been independently disproven."
+        ),
     ]
 
-    if _contains(question, "execute", "send link", "refund", "retry payment", "recover now"):
+    if _is_greeting(question):
         answer = (
-            "I cannot execute a money or customer-contact action from chat. I can explain the evidence "
-            "or help frame a bounded proposal; execution remains behind policy checks and explicit approval."
+            f"Hi! I’m connected to the verified {bank} {method} incident. I can "
+            "explain why it opened, show how revenue at risk was calculated, review "
+            "its evidence, or describe the safest next step."
+        )
+    elif _contains(question, "execute", "send link", "refund", "retry payment", "recover now"):
+        answer = (
+            "I cannot execute a money or customer-contact action from chat. I can "
+            "explain the evidence or help frame a bounded proposal; execution remains "
+            "behind policy checks and explicit approval."
         )
     elif _contains(question, "why", "cause", "root", "diagnos"):
         answer = (
-            f"The confirmed boundary signal is `{incident.error_reason}` reported against {bank} {method}. "
-            "That identifies where the failure surfaced, not the provider's internal root cause. The most "
-            "plausible explanation is provider-path degradation, but it remains a hypothesis until confirmed."
+            f"The confirmed boundary signal is `{incident.error_reason}` reported "
+            f"against {bank} {method}. That identifies where the failure surfaced, "
+            "not the provider's internal root cause. The most plausible explanation is "
+            "provider-path degradation, but it remains a hypothesis until confirmed."
         )
     elif _contains(question, "impact", "money", "risk", "revenue", "amount"):
         answer = (
-            f"The verified revenue exposure is {money}: {incident.current_failure_count} failed payments "
-            f"during the current window. The failure rate is {current_rate}, compared with a "
+            f"The verified revenue exposure is {money}: "
+            f"{incident.current_failure_count} failed payments during the current "
+            f"window. The failure rate is {current_rate}, compared with a "
             f"{baseline_rate} baseline. This is money at risk, not confirmed permanent loss."
         )
     elif _contains(question, "evidence", "verify", "proof", "trust", "consistent"):
         state = "reconciles" if verified else "does not reconcile"
         answer = (
-            f"The incident snapshot {state} with its persisted evidence. I found {len(facts)} payment facts "
+            f"The incident snapshot {state} with its persisted evidence. I found "
+            f"{len(facts)} payment facts "
             f"and {len(metrics)} metric snapshot. The evidence totals {money}."
         )
     elif _contains(question, "next", "recommend", "action", "plan", "do"):
         answer = (
-            f"First continue read-only monitoring of the {bank} {method} segment and check whether the "
-            "timeout signature persists. If recovery is needed, prepare a bounded proposal referencing "
-            "this evidence. The proposal must remain non-executable until the merchant approves it."
+            f"First continue read-only monitoring of the {bank} {method} segment and "
+            "check whether the timeout signature persists. If recovery is needed, "
+            "prepare a bounded proposal referencing this evidence. The proposal must "
+            "remain non-executable until the merchant approves it."
         )
     else:
         answer = (
             f"This is an open {method} payment-failure incident affecting {bank}. "
-            f"{incident.current_failure_count} of {incident.current_attempt_count} current attempts failed, "
-            f"raising the failure rate from {baseline_rate} to {current_rate}. Verified revenue at risk is "
-            f"{money}. Ask me about the evidence, likely cause, revenue impact, or safest next step."
+            f"{incident.current_failure_count} of {incident.current_attempt_count} "
+            f"current attempts failed, raising the failure rate from {baseline_rate} "
+            f"to {current_rate}. Verified revenue at risk is {money}. Ask me about the "
+            "evidence, likely cause, revenue impact, or safest next step."
         )
 
     return IncidentCommanderChatResponse(
@@ -104,6 +128,22 @@ def answer_incident_question(
 
 def _contains(question: str, *terms: str) -> bool:
     return any(term in question for term in terms)
+
+
+def _is_greeting(question: str) -> bool:
+    greetings = {
+        "hi",
+        "hii",
+        "hiii",
+        "hello",
+        "hey",
+        "good morning",
+        "good afternoon",
+        "good evening",
+    }
+    return question in greetings or any(
+        question.startswith(f"{greeting} ") for greeting in ("hi", "hello", "hey")
+    )
 
 
 def _percent(value: float) -> str:
