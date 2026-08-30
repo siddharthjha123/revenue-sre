@@ -92,6 +92,7 @@ async def test_allowed_proposal_can_be_approved_once_without_execution(
     events = set((await session.scalars(select(AuditRecord.event_type))).all())
     assert proposal.policy_allowed is True
     assert proposal.status == RecoveryPlanStatus.PENDING_APPROVAL
+    assert len(proposal.evidence_ids) == 4
     assert stored is not None and stored.status == RecoveryPlanStatus.APPROVED
     assert decision.approval_id == replay.approval_id
     assert decision.plan_hash == proposal.content_hash

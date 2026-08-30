@@ -1,8 +1,8 @@
 """Load one incident through the authenticated production webhook pipeline.
 
-This utility never inserts incidents or evidence directly. It emits a small,
-clearly-labelled set of Razorpay-format demo webhooks through the running API,
-then waits for the durable worker and detector to create an incident.
+This utility never inserts incidents or evidence directly. It emits a realistic,
+PII-free batch of Razorpay-format demo webhooks through the running API, then
+waits for the durable worker and detector to create the expected incident.
 """
 
 import argparse
@@ -32,42 +32,95 @@ class DemoLoadError(RuntimeError):
 class DemoEvent:
     """One deterministic provider event in the baseline/current timeline."""
 
+    segment: str
     status: str
     occurred_at: datetime
     payment_id: str
     order_id: str
     amount_subunits: int
+    method: str
+    bank: str
+    error_reason: str | None = None
 
 
-def build_demo_events(anchor: datetime, run_id: str) -> list[DemoEvent]:
-    """Build five healthy baseline and five current-window attempts.
+TARGET_SEGMENT = "target_upi_timeout"
+EXPECTED_EVENT_COUNT = 150
+EXPECTED_CURRENT_FAILURE_RATE = 0.60
+EXPECTED_REVENUE_AT_RISK_SUBUNITS = 1_200_000
+DEMO_TARGET_BANKS = ("HDFC", "AXIS", "KOTAK", "YESB", "IDFC")
 
-    The current window contains two captured and three failed UPI payments,
-    producing a 60% failure rate and 60,000 paise at risk under demo settings.
+
+@dataclass(frozen=True, slots=True)
+class DemoSegment:
+    """Traffic distribution for one payment route in both detector windows."""
+
+    name: str
+    method: str
+    bank: str
+    error_reason: str
+    baseline_attempts: int
+    baseline_failures: int
+    current_attempts: int
+    current_failures: int
+    failed_amount_subunits: int
+
+
+def build_demo_events(
+    anchor: datetime,
+    run_id: str,
+    *,
+    target_bank: str = "HDFC",
+) -> list[DemoEvent]:
+    """Build a 150-payment batch containing one explainable anomaly.
+
+    HDFC UPI traffic moves from 2/40 baseline failures (5%) to 12/20
+    current failures (60%). The SBI UPI and ICICI card segments remain below
+    the minimum failure count/rate and act as controls against false positives.
     """
 
-    timeline = [
-        ("captured", -20, 5_000),
-        ("captured", -19, 5_000),
-        ("captured", -18, 5_000),
-        ("captured", -17, 5_000),
-        ("captured", -16, 5_000),
-        ("captured", -4, 7_000),
-        ("captured", -3, 8_000),
-        ("failed", -2, 10_000),
-        ("failed", -1, 20_000),
-        ("failed", 0, 30_000),
-    ]
-    return [
-        DemoEvent(
-            status=status,
-            occurred_at=anchor + timedelta(minutes=minutes),
-            payment_id=f"pay_Demo{run_id}{index:02d}",
-            order_id=f"order_Demo{run_id}{index:02d}",
-            amount_subunits=amount,
-        )
-        for index, (status, minutes, amount) in enumerate(timeline)
-    ]
+    segments = (
+        DemoSegment(
+            TARGET_SEGMENT,
+            "upi",
+            target_bank,
+            "payment_timed_out",
+            40,
+            2,
+            20,
+            12,
+            100_000,
+        ),
+        DemoSegment("upi_sbi_healthy", "upi", "SBI", "payment_timed_out", 30, 1, 15, 1, 75_000),
+        DemoSegment("card_icici_noise", "card", "ICICI", "card_declined", 30, 1, 15, 2, 125_000),
+    )
+    events: list[DemoEvent] = []
+    sequence = 0
+    for segment in segments:
+        for _window, attempts, failures, start, span in (
+            ("baseline", segment.baseline_attempts, segment.baseline_failures, -34 * 60, 28 * 60),
+            ("current", segment.current_attempts, segment.current_failures, -4 * 60, 4 * 60),
+        ):
+            for index in range(attempts):
+                # Failures come last inside each segment so the full population
+                # is present before the detector sees an anomaly.
+                failed = index >= attempts - failures
+                offset_seconds = start + round(span * index / max(attempts - 1, 1))
+                identifier = f"{run_id}{sequence:03d}"
+                events.append(
+                    DemoEvent(
+                        segment=segment.name,
+                        status="failed" if failed else "captured",
+                        occurred_at=anchor + timedelta(seconds=offset_seconds),
+                        payment_id=f"pay_Demo{identifier}",
+                        order_id=f"order_Demo{identifier}",
+                        amount_subunits=(segment.failed_amount_subunits if failed else 50_000),
+                        method=segment.method,
+                        bank=segment.bank,
+                        error_reason=segment.error_reason if failed else None,
+                    )
+                )
+                sequence += 1
+    return sorted(events, key=lambda event: (event.occurred_at, event.payment_id))
 
 
 def event_payload(event: DemoEvent, account_id: str) -> dict[str, Any]:
@@ -90,15 +143,17 @@ def event_payload(event: DemoEvent, account_id: str) -> dict[str, Any]:
                     "currency": "INR",
                     "status": event.status,
                     "order_id": event.order_id,
-                    "method": "upi",
+                    "method": event.method,
                     "captured": event.status == "captured",
                     "international": False,
-                    "bank": "HDFC",
+                    "bank": event.bank,
                     "error_code": "BAD_REQUEST_ERROR" if failed else None,
-                    "error_description": "Payment timed out at bank" if failed else None,
+                    "error_description": (
+                        "Synthetic provider failure for incident demonstration" if failed else None
+                    ),
                     "error_source": "bank" if failed else None,
                     "error_step": "payment_authorization" if failed else None,
-                    "error_reason": "payment_timed_out" if failed else None,
+                    "error_reason": event.error_reason if failed else None,
                     "created_at": timestamp,
                 }
             }
@@ -133,7 +188,24 @@ def load_demo_incident(
 
     anchor = anchor or datetime.now(UTC)
     run_id = anchor.strftime("%Y%m%d%H%M%S")
-    events = build_demo_events(anchor, run_id)
+    existing_incidents = _request_json(
+        f"{base_url}/incidents?limit=100",
+        headers={"X-Merchant-Id": str(settings.merchant_id)},
+    )
+    previously_used_banks = {
+        incident.get("bank")
+        for incident in existing_incidents
+        if incident.get("method") == "upi" and incident.get("error_reason") == "payment_timed_out"
+    }
+    target_bank = next(
+        (bank for bank in DEMO_TARGET_BANKS if bank not in previously_used_banks),
+        None,
+    )
+    if target_bank is None:
+        raise DemoLoadError(
+            "All demo target banks already have incidents; use a clean demo database"
+        )
+    events = build_demo_events(anchor, run_id, target_bank=target_bank)
     accepted = 0
     for index, event in enumerate(events):
         payload = event_payload(event, settings.razorpay_account_id)
@@ -165,15 +237,28 @@ def load_demo_incident(
             incident
             for incident in incidents
             if incident.get("method") == "upi"
-            and incident.get("bank") == "HDFC"
+            and incident.get("bank") == target_bank
             and incident.get("error_reason") == "payment_timed_out"
         ]
         if matching:
             incident = matching[0]
+            if (
+                incident.get("current_failure_rate") != EXPECTED_CURRENT_FAILURE_RATE
+                or incident.get("revenue_at_risk_subunits") != EXPECTED_REVENUE_AT_RISK_SUBUNITS
+            ):
+                time.sleep(1)
+                continue
             return {
                 "run_id": run_id,
+                "submitted_webhooks": len(events),
                 "accepted_webhooks": accepted,
                 "incident_id": incident["incident_id"],
+                "affected_segment": {
+                    "method": incident["method"],
+                    "bank": incident["bank"],
+                    "error_reason": incident["error_reason"],
+                },
+                "baseline_failure_rate": incident["baseline_failure_rate"],
                 "current_failure_rate": incident["current_failure_rate"],
                 "revenue_at_risk_subunits": incident["revenue_at_risk_subunits"],
             }
@@ -234,10 +319,10 @@ def _request_json(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Create one persistent incident through signed demo webhooks."
+        description="Create one persistent incident from a 150-payment demo batch."
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--timeout-seconds", type=int, default=30)
+    parser.add_argument("--timeout-seconds", type=int, default=90)
     args = parser.parse_args()
     try:
         result = load_demo_incident(

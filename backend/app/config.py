@@ -5,18 +5,23 @@ must never be committed to source control.
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 class Settings(BaseSettings):
     """Runtime configuration with safe local defaults."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Resolve from the repository root so API, worker, scripts, and MCP
+        # receive identical settings regardless of their launch directory.
+        env_file=PROJECT_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )

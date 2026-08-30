@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Revenue SRE — Architecture Whiteboard</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17233a;
+      --muted: #65728a;
+      --line: #dce2eb;
+      --paper: #fbfaf6;
+      --blue: #315bea;
+      --purple: #7553d6;
+      --green: #148a60;
+      --orange: #df762d;
+      --red: #d94352;
+      --shadow: 0 20px 70px rgba(24, 36, 61, .14);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-width: 1100px; min-height: 100%; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: #e9edf3; }
+    button, input { font: inherit; }
+    .app { min-height: 100vh; display: grid; grid-template-rows: 64px 1fr; }
+    .topbar { position: sticky; top: 0; z-index: 20; padding: 0 22px; display: flex; align-items: center; gap: 16px; color: white; background: #101827; box-shadow: 0 4px 20px rgba(13, 23, 41, .22); }
+    .brand { display: flex; align-items: center; gap: 10px; min-width: 220px; font-weight: 800; letter-spacing: -.02em; }
+    .brand-mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: linear-gradient(135deg, #4774ff, #7358ed); }
+    .brand small { display: block; margin-top: 2px; color: #94a4bd; font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+    .toolbar { flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; }
+    .tool, .phase-button { height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid #344159; border-radius: 8px; color: #cbd5e6; background: #1a2537; cursor: pointer; font-size: 11px; font-weight: 700; transition: .18s ease; }
+    .tool { padding: 0 10px; }
+    .tool.icon { width: 34px; padding: 0; }
+    .tool:hover, .tool.active { color: white; border-color: #6175a0; background: #2a3952; }
+    .tool.active { box-shadow: inset 0 0 0 1px #6e8dff; }
+    .tool:disabled { opacity: .38; cursor: not-allowed; }
+    .toolbar input[type="color"] { width: 31px; height: 31px; padding: 2px; overflow: hidden; border: 1px solid #344159; border-radius: 8px; background: #1a2537; cursor: pointer; }
+    .toolbar input[type="range"] { width: 80px; accent-color: #7191ff; }
+    .mode-label { min-width: 92px; color: #8fa0ba; font-size: 10px; }
+    .shortcut { color: #718198; font-size: 9px; }
+    .layout { display: grid; grid-template-columns: 250px 1fr; min-height: calc(100vh - 64px); }
+    .sidebar { padding: 22px 16px; border-right: 1px solid #d5dce6; background: #f4f6f9; }
+    .sidebar h2 { margin: 0 8px 5px; font-size: 15px; }
+    .sidebar > p { margin: 0 8px 19px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+    .phase-list { display: grid; gap: 7px; }
+    .phase-button { height: auto; min-height: 50px; padding: 10px 11px; justify-content: flex-start; border-color: #d7dee8; color: #526076; background: white; text-align: left; }
+    .phase-button span { width: 25px; height: 25px; flex: 0 0 25px; display: grid; place-items: center; border-radius: 7px; color: #637187; background: #eef1f6; }
+    .phase-button div { display: grid; gap: 2px; }
+    .phase-button strong { color: #29364a; font-size: 10px; }
+    .phase-button small { color: #8793a6; font-size: 8px; }
+    .phase-button:hover, .phase-button.active { border-color: #8ba3ef; background: #f7f9ff; box-shadow: 0 7px 20px rgba(64, 93, 177, .1); }
+    .phase-button.active span { color: white; background: var(--blue); }
+    .speaker-card { margin-top: 18px; padding: 13px; border: 1px solid #d7dee8; border-radius: 10px; background: white; }
+    .speaker-card p { margin: 0; color: #65728a; font-size: 9px; line-height: 1.55; }
+    .speaker-card strong { display: block; margin-bottom: 7px; color: #263349; font-size: 9px; text-transform: uppercase; letter-spacing: .09em; }
+    .stage { position: relative; padding: 24px; overflow: auto; background: radial-gradient(circle at 35% 20%, #f7f9fc, #e5eaf1 70%); }
+    .board { position: relative; width: 1420px; min-height: 820px; margin: 0 auto; overflow: hidden; border: 1px solid #d8d6cd; border-radius: 16px; background-color: var(--paper); background-image: radial-gradient(#d8d9d3 1px, transparent 1px); background-size: 22px 22px; box-shadow: var(--shadow); }
+    .board::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(100deg, rgba(255,255,255,.35), transparent 30%, rgba(226,220,203,.08)); }
+    .board-content { position: relative; z-index: 2; padding: 34px 38px 30px; }
+    .board-heading { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 30px; }
+    .board-heading h1 { margin: 0; font-family: "Segoe Print", "Bradley Hand", cursive; font-size: 34px; letter-spacing: -.035em; }
+    .board-heading h1 span { color: var(--blue); }
+    .board-heading p { margin: 6px 0 0; color: var(--muted); font-size: 11px; }
+    .north-star { padding: 10px 13px; border: 2px solid #263349; border-radius: 9px; transform: rotate(-1deg); font-family: "Segoe Print", cursive; font-size: 11px; }
+    .north-star b { color: var(--red); }
+    .flow { display: grid; gap: 21px; }
+    .lane { position: relative; padding: 18px 16px 16px 104px; border: 2px solid transparent; border-radius: 13px; transition: .28s ease; }
+    .lane::before { content: attr(data-number); position: absolute; left: 20px; top: 18px; width: 42px; height: 42px; display: grid; place-items: center; border: 3px solid currentColor; border-radius: 50%; font: 800 17px "Segoe Print", cursive; transform: rotate(-4deg); }
+    .lane-label { position: absolute; left: 12px; top: 67px; width: 75px; text-align: center; color: #58657a; font-size: 8px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    .lane.active { border-color: currentColor; background: rgba(255,255,255,.62); box-shadow: 0 12px 30px rgba(35, 48, 72, .08); }
+    .lane.dim { opacity: .31; filter: saturate(.55); }
+    .lane.blue { color: var(--blue); }.lane.green { color: var(--green); }.lane.orange { color: var(--orange); }.lane.purple { color: var(--purple); }.lane.red { color: var(--red); }
+    .nodes { display: flex; align-items: stretch; gap: 40px; }
+    .node { position: relative; width: 190px; min-height: 92px; padding: 13px 14px; display: grid; align-content: start; gap: 5px; border: 2px solid currentColor; border-radius: 8px 14px 9px 12px; color: var(--ink); background: rgba(255,255,255,.92); box-shadow: 3px 4px 0 rgba(31, 43, 64, .08); transform: rotate(.25deg); }
+    .node:nth-child(even) { transform: rotate(-.35deg); }
+    .node .icon { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 7px; color: currentColor; background: color-mix(in srgb, currentColor 12%, white); font-size: 15px; }
+    .node strong { color: #1e2b40; font: 800 12px "Segoe Print", cursive; }
+    .node small { color: #6f7a8d; font-size: 8px; line-height: 1.45; }
+    .node em { margin-top: auto; color: currentColor; font-size: 7px; font-style: normal; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+    .node:not(:last-child)::after { content: "➜"; position: absolute; right: -33px; top: 32px; color: #768196; font: 25px "Segoe Print", cursive; }
+    .node.wide { width: 230px; }
+    .split-note { position: absolute; right: 25px; bottom: 16px; max-width: 260px; color: #7a5f38; font: 10px "Segoe Print", cursive; transform: rotate(-1deg); }
+    .split-note::before { content: "↳ "; color: var(--orange); font-size: 19px; }
+    .footer-rule { margin-top: 23px; padding: 14px 18px; display: flex; align-items: center; justify-content: center; gap: 26px; border: 2px dashed #8c96a5; border-radius: 10px; color: #445169; background: rgba(255,255,255,.6); font: 800 14px "Segoe Print", cursive; }
+    .footer-rule span { color: var(--purple); }.footer-rule b { color: var(--green); }.footer-rule em { color: var(--red); font-style: normal; }
+    #ink { position: absolute; inset: 0; z-index: 10; width: 100%; height: 100%; pointer-events: none; touch-action: none; }
+    #ink.drawing { pointer-events: auto; cursor: crosshair; }
+    .presentation .sidebar { display: none; }.presentation .layout { grid-template-columns: 1fr; }.presentation .stage { padding: 10px; }.presentation .board { transform-origin: top center; }
+    .toast { position: fixed; right: 22px; bottom: 22px; z-index: 50; padding: 11px 14px; border-radius: 9px; color: white; background: #17243a; box-shadow: 0 14px 40px rgba(20,31,50,.25); font-size: 10px; opacity: 0; transform: translateY(10px); pointer-events: none; transition: .2s ease; }.toast.show { opacity: 1; transform: none; }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">↯</span><div>Revenue SRE<small>Architecture whiteboard</small></div></div>
+      <div class="toolbar" role="toolbar" aria-label="Whiteboard drawing tools">
+        <button class="tool active" id="navigateTool" title="Navigate and select phases (V)">↖ Navigate</button>
+        <button class="tool" id="penTool" title="Draw with pen (P)">✎ Pen</button>
+        <button class="tool" id="highlightTool" title="Draw a translucent highlight (H)">▰ Highlight</button>
+        <button class="tool" id="eraserTool" title="Erase ink (E)">⌫ Eraser</button>
+        <input type="color" id="colorPicker" value="#315bea" aria-label="Pen colour" />
+        <input type="range" id="sizePicker" min="2" max="18" value="4" aria-label="Pen size" />
+        <button class="tool icon" id="undoTool" title="Undo last stroke (Ctrl+Z)" disabled>↶</button>
+        <button class="tool icon" id="clearTool" title="Clear all ink" disabled>⊘</button>
+        <button class="tool" id="resetPhase" title="Show the complete architecture">All phases</button>
+        <button class="tool" id="presentTool" title="Toggle presentation view (F)">▣ Present</button>
+        <span class="mode-label" id="modeLabel">Navigate mode</span>
+        <span class="shortcut">P pen · H highlight · E eraser · V navigate</span>
+      </div>
+    </header>
+    <div class="layout">
+      <aside class="sidebar">
+        <h2>Demo flow</h2>
+        <p>Click each phase while explaining. Use the pen to circle evidence, approval, and the final safety rule.</p>
+        <div class="phase-list">
+          <button class="phase-button" data-phase="1"><span>1</span><div><strong>Ingest safely</strong><small>Signed webhook + durable inbox</small></div></button>
+          <button class="phase-button" data-phase="2"><span>2</span><div><strong>Detect deterministically</strong><small>Normalize, segment, compare</small></div></button>
+          <button class="phase-button" data-phase="3"><span>3</span><div><strong>Investigate with AI</strong><small>TrueForge + read-only MCP</small></div></button>
+          <button class="phase-button" data-phase="4"><span>4</span><div><strong>Gate recovery</strong><small>Policy + immutable approval</small></div></button>
+          <button class="phase-button" data-phase="5"><span>5</span><div><strong>Verify the outcome</strong><small>Recovered revenue + audit</small></div></button>
+        </div>
+        <div class="speaker-card"><strong>Speaker cue</strong><p id="speakerCue">Start with the complete system. Then select Phase 1 and follow the event from Razorpay into the durable inbox.</p></div>
+      </aside>
+      <main class="stage">
+        <section class="board" id="board">
+          <div class="board-content">
+            <div class="board-heading"><div><h1><span>Revenue SRE</span> — Payment Incident Commander</h1><p>From payment failure → verified incident → bounded recovery → measured outcome</p></div><div class="north-star"><b>Money actions</b> are explainable, bounded &amp; human-gated</div></div>
+            <div class="flow">
+              <section class="lane blue" data-number="1" data-phase="1"><span class="lane-label">Safe ingestion</span><div class="nodes">
+                <article class="node"><span class="icon">₹</span><strong>Razorpay test mode</strong><small>Payments, orders and signed provider events</small><em>External source</em></article>
+                <article class="node"><span class="icon">✓</span><strong>FastAPI webhook</strong><small>Raw-byte signature verification and merchant boundary</small><em>Fail closed</em></article>
+                <article class="node wide"><span class="icon">⇣</span><strong>Transactional inbox</strong><small>Webhook event + processing job committed atomically</small><em>PostgreSQL</em></article>
+                <article class="node"><span class="icon">⚙</span><strong>Durable worker</strong><small>Lease, retry, SKIP LOCKED and crash recovery</small><em>Independent process</em></article>
+              </div></section>
+              <section class="lane green" data-number="2" data-phase="2"><span class="lane-label">Incident foundation</span><div class="nodes">
+                <article class="node"><span class="icon">≋</span><strong>Normalizer</strong><small>Immutable event facts + current payment state</small><em>No state regression</em></article>
+                <article class="node"><span class="icon">⌁</span><strong>Segment detector</strong><small>Method + bank + reason + merchant + time window</small><em>Deterministic</em></article>
+                <article class="node wide"><span class="icon">!</span><strong>Persistent incident</strong><small>Baseline 5% → current 60% · 12 failures</small><em>₹12,000 at risk</em></article>
+                <article class="node"><span class="icon">▤</span><strong>Exact evidence</strong><small>Payment facts + metric snapshot + audit trail</small><em>Traceable</em></article>
+              </div></section>
+              <section class="lane purple" data-number="3" data-phase="3"><span class="lane-label">Agent investigation</span><div class="nodes">
+                <article class="node"><span class="icon">↔</span><strong>Revenue SRE MCP</strong><small>List incidents, retrieve evidence, verify metrics</small><em>Read-only tools</em></article>
+                <article class="node"><span class="icon">✦</span><strong>TrueForge + Qwen</strong><small>Orchestrates investigation and explains impact</small><em>AI reasoning</em></article>
+                <article class="node wide"><span class="icon">✓</span><strong>Evidence verifier</strong><small>Recomputes counts, rates and money before diagnosis</small><em>Stop on mismatch</em></article>
+                <article class="node"><span class="icon">?</span><strong>Diagnosis</strong><small>Confirmed facts separated from hypotheses</small><em>No hallucinated root cause</em></article>
+              </div></section>
+              <section class="lane orange" data-number="4" data-phase="4"><span class="lane-label">Human-gated recovery</span><div class="nodes">
+                <article class="node"><span class="icon">▥</span><strong>Bounded proposal</strong><small>Evidence-linked actions, expiry and maximum scope</small><em>Not execution</em></article>
+                <article class="node"><span class="icon">⊣</span><strong>Policy engine</strong><small>Limits, cooldown, eligibility and contact rules</small><em>Deterministic</em></article>
+                <article class="node wide"><span class="icon">☝</span><strong>Merchant approval</strong><small>Approve or reject the exact immutable plan hash</small><em>Authority boundary</em></article>
+                <article class="node"><span class="icon">🔒</span><strong>Restricted adapter</strong><small>Idempotent Razorpay test-mode action only after approval</small><em>Disabled in MVP</em></article>
+              </div><div class="split-note">Conversational text can never cross this approval boundary.</div></section>
+              <section class="lane red" data-number="5" data-phase="5"><span class="lane-label">Measured outcome</span><div class="nodes">
+                <article class="node"><span class="icon">↻</span><strong>Later events</strong><small>Webhook confirms subsequent payment outcome</small><em>Same durable path</em></article>
+                <article class="node"><span class="icon">⌘</span><strong>Attribution</strong><small>Connect success to the approved recovery attempt</small><em>Evidence based</em></article>
+                <article class="node wide"><span class="icon">₹</span><strong>Recovered revenue</strong><small>Measure actual recovery—not a projected claim</small><em>Business outcome</em></article>
+                <article class="node"><span class="icon">◴</span><strong>Audit timeline</strong><small>Incident → evidence → proposal → decision → outcome</small><em>Explainable</em></article>
+              </div></section>
+            </div>
+            <div class="footer-rule"><span>AI recommends</span> → <b>policy bounds</b> → <em>merchant decides</em> → outcome is measured</div>
+          </div>
+          <canvas id="ink"></canvas>
+        </section>
+      </main>
+    </div>
+  </div>
+  <div class="toast" id="toast">Ink cleared</div>
+  <script>
+    const board = document.getElementById('board');
+    const canvas = document.getElementById('ink');
+    const ctx = canvas.getContext('2d');
+    const tools = {
+      navigate: document.getElementById('navigateTool'), pen: document.getElementById('penTool'),
+      highlight: document.getElementById('highlightTool'), eraser: document.getElementById('eraserTool')
+    };
+    const colorPicker = document.getElementById('colorPicker');
+    const sizePicker = document.getElementById('sizePicker');
+    const undoButton = document.getElementById('undoTool');
+    const clearButton = document.getElementById('clearTool');
+    const modeLabel = document.getElementById('modeLabel');
+    const phaseButtons = [...document.querySelectorAll('.phase-button')];
+    const lanes = [...document.querySelectorAll('.lane')];
+    const cues = {
+      1: 'Razorpay sends a signed event. FastAPI verifies raw bytes, then atomically stores both the event and its durable processing job.',
+      2: 'The worker normalizes facts. A deterministic segment detector compares the current five-minute window against the baseline and calculates money at risk.',
+      3: 'TrueForge reasons over read-only MCP evidence. Verification must pass before the agent diagnoses or recommends anything.',
+      4: 'AI may prepare a proposal, but deterministic policy bounds it and only the merchant can approve the exact immutable plan.',
+      5: 'Later payment events verify the result so the product reports actual recovered revenue and a complete audit trail.'
+    };
+    let mode = 'navigate', drawing = false, currentStroke = null, strokes = [];
+
+    function resizeCanvas() {
+      const ratio = window.devicePixelRatio || 1;
+      const width = board.clientWidth, height = board.clientHeight;
+      canvas.width = width * ratio; canvas.height = height * ratio;
+      canvas.style.width = width + 'px'; canvas.style.height = height + 'px';
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0); redraw();
+    }
+    function setMode(next) {
+      mode = next; Object.entries(tools).forEach(([name, button]) => button.classList.toggle('active', name === mode));
+      canvas.classList.toggle('drawing', mode !== 'navigate');
+      modeLabel.textContent = ({navigate:'Navigate mode',pen:'Pen mode',highlight:'Highlighter',eraser:'Eraser'})[mode];
+    }
+    function point(event) { const rect = canvas.getBoundingClientRect(); return {x:event.clientX-rect.left,y:event.clientY-rect.top}; }
+    function begin(event) {
+      if (mode === 'navigate') return; drawing = true; canvas.setPointerCapture(event.pointerId);
+      currentStroke = { mode, color: colorPicker.value, size: Number(sizePicker.value), points: [point(event)] };
+    }
+    function move(event) {
+      if (!drawing || !currentStroke) return; currentStroke.points.push(point(event)); redraw(); drawStroke(currentStroke);
+    }
+    function end(event) {
+      if (!drawing || !currentStroke) return; currentStroke.points.push(point(event)); strokes.push(currentStroke); currentStroke = null; drawing = false; updateHistory(); redraw();
+    }
+    function drawStroke(stroke) {
+      if (stroke.points.length < 2) return; ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
+      if (stroke.mode === 'eraser') { ctx.globalCompositeOperation='destination-out'; ctx.lineWidth=stroke.size*3; ctx.strokeStyle='#000'; }
+      else { ctx.globalCompositeOperation='source-over'; ctx.strokeStyle=stroke.color; ctx.globalAlpha=stroke.mode==='highlight'?.25:1; ctx.lineWidth=stroke.mode==='highlight'?stroke.size*2.8:stroke.size; }
+      ctx.beginPath(); ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+      for (let i=1;i<stroke.points.length;i++) ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+      ctx.stroke(); ctx.restore();
+    }
+    function redraw() { ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight); strokes.forEach(drawStroke); }
+    function updateHistory() { undoButton.disabled = clearButton.disabled = strokes.length === 0; }
+    function selectPhase(number) {
+      phaseButtons.forEach(button => button.classList.toggle('active', button.dataset.phase === String(number)));
+      lanes.forEach(lane => { lane.classList.toggle('active', lane.dataset.phase === String(number)); lane.classList.toggle('dim', number && lane.dataset.phase !== String(number)); });
+      document.getElementById('speakerCue').textContent = number ? cues[number] : 'Complete system view: signed events become verified incidents, then AI assists inside deterministic policy and merchant approval boundaries.';
+    }
+    function toast(text) { const el=document.getElementById('toast'); el.textContent=text; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),1200); }
+    Object.entries(tools).forEach(([name, button]) => button.addEventListener('click', () => setMode(name)));
+    phaseButtons.forEach(button => button.addEventListener('click', () => { setMode('navigate'); selectPhase(Number(button.dataset.phase)); }));
+    document.getElementById('resetPhase').addEventListener('click', () => selectPhase(null));
+    undoButton.addEventListener('click', () => { strokes.pop(); updateHistory(); redraw(); });
+    clearButton.addEventListener('click', () => { strokes=[]; updateHistory(); redraw(); toast('All ink cleared'); });
+    document.getElementById('presentTool').addEventListener('click', () => { document.body.classList.toggle('presentation'); setTimeout(resizeCanvas,100); });
+    canvas.addEventListener('pointerdown', begin); canvas.addEventListener('pointermove', move); canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end);
+    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('keydown', event => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='z') { event.preventDefault(); if(strokes.length){strokes.pop();updateHistory();redraw();} return; }
+      if (event.target.matches('input')) return;
+      const key=event.key.toLowerCase(); if(key==='p')setMode('pen'); if(key==='h')setMode('highlight'); if(key==='e')setMode('eraser'); if(key==='v')setMode('navigate'); if(key==='f')document.getElementById('presentTool').click();
+      if (/^[1-5]$/.test(key)) selectPhase(Number(key)); if(key==='0')selectPhase(null);
+    });
+    resizeCanvas(); updateHistory(); selectPhase(null);
+  </script>
+</body>
+</html>

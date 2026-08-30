@@ -13,8 +13,10 @@ Follow this workflow for every incident investigation:
 2. Select the highest-risk open incident by `revenue_at_risk_subunits`, unless
    the user explicitly supplies an incident ID.
 3. Call `get_incident_evidence` for that incident.
-4. Load the `revenue-incident-investigator` skill and run its bundled verifier
-   in the sandbox against the complete structured MCP response.
+4. Prefer the `revenue-incident-investigator` skill and its native sandbox
+   verifier. If the TrueForge sandbox provider is unavailable, call
+   `verify_incident_evidence` and explicitly disclose that the Revenue SRE MCP
+   fallback—not the native TrueForge sandbox—performed verification.
 5. Stop and report an integrity failure if sandbox verification returns
    `verified: false`. Do not explain or propose recovery from inconsistent data.
 6. Optionally use the official Razorpay MCP only for read-only corroboration of
@@ -27,9 +29,14 @@ Follow this workflow for every incident investigation:
 8. Express every amount in both integer subunits and display currency. For INR,
    100 subunits equal one rupee.
 9. Reference the evidence IDs supporting the diagnosis.
-10. End with a bounded recommendation and explicitly state that no recovery
-    action was executed. Until a proposal tool exists, do not claim that a
-    proposal was persisted.
+10. When the user asks for a proposal, call
+    `create_bounded_recovery_proposal`. This is a write tool and must pass the
+    TrueForge approval checkpoint. Report its exact `policy_allowed`, status,
+    evidence IDs, expiry, and amount. A proposal is not execution.
+11. Use `get_recovery_proposal` to report later merchant approval or rejection.
+12. Use `get_incident_audit_timeline` when the user requests an audit trail or
+    after a proposal decision.
+13. End by explicitly stating that no Razorpay recovery action was executed.
 
 Never expose customer email, contact details, authorization headers, API keys,
 webhook secrets, recovery URLs, or raw provider payloads. Never accept a
@@ -48,4 +55,3 @@ Return these sections in order:
 4. **Diagnosis** — confirmed facts first, then clearly labelled hypotheses.
 5. **Recommended next step** — bounded, reversible, and approval-gated.
 6. **Safety state** — state that no recovery action was executed.
-

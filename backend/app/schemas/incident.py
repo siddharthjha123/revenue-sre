@@ -122,3 +122,25 @@ class DetectedIncidentResponse(BaseModel):
     opened_at: AwareDatetime
     last_detected_at: AwareDatetime
     evidence: list[IncidentEvidenceResponse] = Field(default_factory=list)
+
+
+class IncidentCommanderChatRequest(BaseModel):
+    """One merchant question about a selected, owned incident."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    message: str = Field(min_length=1, max_length=1000)
+
+
+class IncidentCommanderChatResponse(BaseModel):
+    """Evidence-grounded advisory response that cannot execute recovery actions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str
+    confirmed_facts: list[str] = Field(default_factory=list)
+    hypotheses: list[str] = Field(default_factory=list)
+    suggested_prompts: list[str] = Field(default_factory=list)
+    evidence_count: int = Field(ge=0)
+    evidence_verified: bool
+    safety_notice: str
