@@ -212,6 +212,32 @@ class IncidentRepository:
         )
         return result.all()
 
+    async def list_actionable(
+        self,
+        merchant_id: UUID,
+        *,
+        limit: int = 20,
+    ) -> Sequence[Incident]:
+        """Return only incidents that still require investigation.
+
+        Merchant filtering is part of the query so callers cannot accidentally
+        fetch another tenant's incidents and filter them after retrieval.
+        """
+
+        result = await self._session.scalars(
+            select(Incident)
+            .where(
+                Incident.merchant_id == merchant_id,
+                Incident.status.in_((IncidentStatus.OPEN, IncidentStatus.INVESTIGATING)),
+            )
+            .order_by(
+                Incident.revenue_at_risk_subunits.desc(),
+                Incident.last_detected_at.desc(),
+            )
+            .limit(min(max(limit, 1), 50))
+        )
+        return result.all()
+
     async def list_evidence(
         self, merchant_id: UUID, incident_id: UUID
     ) -> Sequence[IncidentEvidenceRecord]:
