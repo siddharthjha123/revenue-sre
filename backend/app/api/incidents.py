@@ -91,6 +91,28 @@ async def create_recovery_proposal(
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
+@router.get(
+    "/proposals/{proposal_id}",
+    response_model=RecoveryProposalResponse,
+)
+async def get_recovery_proposal(
+    proposal_id: UUID,
+    merchant_id: Annotated[UUID, Depends(require_merchant)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> RecoveryProposalResponse:
+    """Return a merchant-owned proposal for review or status polling."""
+
+    try:
+        return await RecoveryService(settings).get_proposal(
+            session,
+            merchant_id=merchant_id,
+            proposal_id=proposal_id,
+        )
+    except RecoveryNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
 @router.post(
     "/proposals/{proposal_id}/approve",
     response_model=ProposalDecisionResponse,

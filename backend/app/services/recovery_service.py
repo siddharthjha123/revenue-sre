@@ -77,6 +77,8 @@ class RecoveryService:
                 since=now - timedelta(minutes=self._settings.recovery_proposal_cooldown_minutes),
             )
         eligible_ids = await self._eligible_payment_ids(session, incident)
+        eligible_evidence_ids = await self._eligible_evidence_ids(session, incident)
+        evidence_ids = request.evidence_ids or [UUID(value) for value in eligible_evidence_ids]
         proposal_id = uuid4()
         actions = [
             RecoveryAction(
@@ -93,6 +95,7 @@ class RecoveryService:
             plan_id=proposal_id,
             merchant_id=merchant_id,
             incident_id=incident_id,
+            evidence_ids=evidence_ids,
             actions=actions,
             total_amount_subunits=total,
             currency=request.currency,
@@ -105,6 +108,7 @@ class RecoveryService:
             self._policy_context(
                 incident,
                 eligible_ids=eligible_ids,
+                eligible_evidence_ids=eligible_evidence_ids,
                 cooldown_active=cooldown_active,
             ),
             now=now,
@@ -128,6 +132,7 @@ class RecoveryService:
             policy_version=decision.policy_version,
             policy_allowed=decision.allowed,
             policy_reasons=list(decision.reasons),
+            evidence_ids=[str(value) for value in evidence_ids],
             created_by=request.created_by,
         )
         stored_actions = [
@@ -152,7 +157,11 @@ class RecoveryService:
                 event_type=AuditEventType.PLAN_PROPOSED,
                 actor_type=AuditActorType.AGENT,
                 actor_id=request.created_by,
-                details={"plan_hash": content_hash, "total_amount_subunits": total},
+                details={
+                    "plan_hash": content_hash,
+                    "total_amount_subunits": total,
+                    "evidence_ids": [str(value) for value in evidence_ids],
+                },
             )
         )
         await repository.add_audit(
@@ -211,11 +220,13 @@ class RecoveryService:
             if proposal.status != RecoveryPlanStatus.PENDING_APPROVAL:
                 raise RecoveryConflictError("Proposal is not awaiting approval")
             eligible_ids = await self._eligible_payment_ids(session, incident)
+            eligible_evidence_ids = await self._eligible_evidence_ids(session, incident)
             policy = evaluate_recovery_proposal(
                 self._stored_plan(proposal, actions),
                 self._policy_context(
                     incident,
                     eligible_ids=eligible_ids,
+                    eligible_evidence_ids=eligible_evidence_ids,
                     cooldown_active=False,
                 ),
                 policy_version=proposal.policy_version,
@@ -254,6 +265,22 @@ class RecoveryService:
         await session.flush()
         return self._decision_response(record)
 
+    async def get_proposal(
+        self,
+        session: AsyncSession,
+        *,
+        merchant_id: UUID,
+        proposal_id: UUID,
+    ) -> RecoveryProposalResponse:
+        """Return one merchant-owned proposal and its immutable actions."""
+
+        repository = RecoveryRepository(session)
+        proposal = await repository.get_proposal(merchant_id, proposal_id)
+        if proposal is None:
+            raise RecoveryNotFoundError("Recovery proposal was not found")
+        actions = list(await repository.list_actions(proposal_id))
+        return self._proposal_response(proposal, actions)
+
     async def _eligible_payment_ids(
         self, session: AsyncSession, incident: Incident
     ) -> frozenset[str]:
@@ -284,11 +311,25 @@ class RecoveryService:
             payment.payment_id for payment in current if payment.status == PaymentStatus.FAILED
         )
 
+    @staticmethod
+    async def _eligible_evidence_ids(
+        session: AsyncSession,
+        incident: Incident,
+    ) -> frozenset[str]:
+        values = await session.scalars(
+            select(IncidentEvidenceRecord.id).where(
+                IncidentEvidenceRecord.merchant_id == incident.merchant_id,
+                IncidentEvidenceRecord.incident_id == incident.id,
+            )
+        )
+        return frozenset(str(value) for value in values.all())
+
     def _policy_context(
         self,
         incident: Incident,
         *,
         eligible_ids: frozenset[str],
+        eligible_evidence_ids: frozenset[str],
         cooldown_active: bool,
     ) -> ProposalPolicyContext:
         return ProposalPolicyContext(
@@ -296,6 +337,7 @@ class RecoveryService:
             incident_currency=incident.currency,
             incident_money_at_risk_subunits=incident.revenue_at_risk_subunits,
             eligible_payment_ids=eligible_ids,
+            eligible_evidence_ids=eligible_evidence_ids,
             maximum_plan_amount_subunits=self._settings.recovery_max_plan_amount_subunits,
             maximum_actions=self._settings.recovery_max_actions_per_plan,
             maximum_plan_lifetime_minutes=self._settings.recovery_max_plan_lifetime_minutes,
@@ -312,6 +354,7 @@ class RecoveryService:
             plan_id=proposal.id,
             merchant_id=proposal.merchant_id,
             incident_id=proposal.incident_id,
+            evidence_ids=[UUID(value) for value in proposal.evidence_ids],
             actions=[
                 RecoveryAction(
                     action_id=action.id,
@@ -339,6 +382,7 @@ class RecoveryService:
             proposal_id=proposal.id,
             merchant_id=proposal.merchant_id,
             incident_id=proposal.incident_id,
+            evidence_ids=[UUID(value) for value in proposal.evidence_ids],
             status=proposal.status,
             actions=[
                 RecoveryActionResponse(
@@ -387,6 +431,7 @@ def proposal_content_hash(plan: RecoveryPlan) -> str:
         "plan_id": str(plan.plan_id),
         "merchant_id": str(plan.merchant_id),
         "incident_id": str(plan.incident_id),
+        "evidence_ids": sorted(str(value) for value in plan.evidence_ids),
         "actions": sorted(
             [
                 {
