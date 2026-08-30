@@ -1,18 +1,20 @@
-import { useMemo, useState } from 'react'
+import { type FormEvent, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity, AlertTriangle, ArrowRight, Bot, Check, CheckCircle2, ChevronRight,
   CircleDollarSign, Clock3, Command, FileCheck2, History, LayoutDashboard,
-  RefreshCcw, RotateCcw, ShieldCheck, Sparkles, TrendingUp, X, Zap,
+  LoaderCircle, MessageSquare, RefreshCcw, RotateCcw, Send, ShieldCheck,
+  Sparkles, Trash2, TrendingUp, X, Zap,
 } from 'lucide-react'
 import { motion } from 'motion/react'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { toast } from 'sonner'
 
 import './App.css'
+import './chat.css'
 import { DashboardSkeleton } from './components/DashboardSkeleton'
 import {
-  decideProposal, getActiveProposal, getIncident, getIncidentAudit, getIncidents,
+  askIncidentCommander, decideProposal, getActiveProposal, getIncident, getIncidentAudit, getIncidents,
 } from './lib/api'
 
 const money = (value: number) => new Intl.NumberFormat('en-IN', {
@@ -139,8 +141,9 @@ function App() {
           </div>
 
           <aside className="commander panel">
-            <div className="commander-header"><div className="ai-mark"><Sparkles size={18} /></div><div><p className="eyebrow">TrueForge · Revenue SRE MCP</p><h2>Incident Commander</h2></div><span className="advisory-chip">Advisory</span></div>
-            <p className="control-note"><ShieldCheck size={14} />AI can investigate and propose. You retain execution control.</p>
+            <div className="commander-header"><div className="ai-mark"><Sparkles size={18} /></div><div><p className="eyebrow">Revenue SRE · Verified incident context</p><h2>Incident Commander</h2></div><span className="advisory-chip">Advisory</span></div>
+            <p className="control-note"><ShieldCheck size={14} />Evidence chat explains this incident. TrueForge handles generative investigation separately.</p>
+            <IncidentChat key={incident.incident_id} incidentId={incident.incident_id} incidentLabel={`${incident.bank ?? 'Provider'} ${incident.method.toUpperCase()}`} />
             <Commander icon={<CheckCircle2 />} title="Confirmed facts" tone="green">
               <ul className="fact-list"><li>{incident.current_failure_count} {incident.method.toUpperCase()} payments failed on {incident.bank}.</li><li>Failure rate increased from {percent(incident.baseline_failure_rate)} to {percent(incident.current_failure_rate)}.</li><li>{money(incident.revenue_at_risk_subunits)} is currently exposed.</li><li>Provider boundary reports <code>{incident.error_reason}</code>.</li></ul>
               <button className="text-button" onClick={() => document.getElementById('evidence')?.scrollIntoView({ behavior: 'smooth' })}>View {facts.length} evidence records <ArrowRight size={14} /></button>
@@ -169,6 +172,52 @@ function Sidebar({ open, close }: { open: boolean; close: () => void }) {
 }
 function Metric({ icon, label, value, detail, tone }: { icon: React.ReactNode; label: string; value: string; detail: string; tone: string }) { return <motion.article className="metric-card" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}><div className={`metric-icon ${tone}`}>{icon}</div><div><span>{label}</span><strong>{value}</strong><small>{detail}</small></div></motion.article> }
 function Commander({ icon, title, tone, children }: { icon: React.ReactNode; title: string; tone: string; children: React.ReactNode }) { return <section className="commander-section"><div className={`section-title ${tone}`}>{icon}<h3>{title}</h3></div>{children}</section> }
+type ChatMessage = { id: number; role: 'assistant' | 'user'; content: string }
+function IncidentChat({ incidentId, incidentLabel }: { incidentId: string; incidentLabel: string }) {
+  const [input, setInput] = useState('')
+  const welcomeMessage = `I’m connected to the verified ${incidentLabel} incident. Ask me about its evidence, revenue impact, likely cause, or safest next step.`
+  const [messages, setMessages] = useState<ChatMessage[]>([{
+    id: 0,
+    role: 'assistant',
+    content: welcomeMessage,
+  }])
+  const prompts = ['Why did this open?', 'Revenue impact?', 'Safest next step?']
+  const chat = useMutation({
+    mutationFn: (message: string) => askIncidentCommander(incidentId, message),
+    onSuccess: (reply) => setMessages((current) => [...current, { id: Date.now(), role: 'assistant', content: reply.answer }]),
+    onError: (error) => setMessages((current) => [...current, { id: Date.now(), role: 'assistant', content: `I couldn’t read the incident context: ${error.message}` }]),
+  })
+  const sendQuestion = (question: string) => {
+    const message = question.trim()
+    if (!message || chat.isPending) return
+    setMessages((current) => [...current, { id: Date.now(), role: 'user', content: message }])
+    setInput('')
+    chat.mutate(message)
+  }
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    sendQuestion(input)
+  }
+  const clearChat = () => {
+    chat.reset()
+    setInput('')
+    setMessages([{ id: Date.now(), role: 'assistant', content: welcomeMessage }])
+  }
+  return <section className="commander-chat" aria-label="Chat with Incident Commander">
+    <div className="chat-title"><span><MessageSquare size={14} />Ask Incident Commander</span><div className="chat-title-actions"><small><i />Evidence connected</small><button type="button" className="clear-chat" onClick={clearChat} disabled={chat.isPending || messages.length === 1} aria-label="Clear chat" title="Clear chat"><Trash2 size={13} /></button></div></div>
+    <div className="chat-transcript" aria-live="polite">
+      {messages.map((message) => <div className={`chat-message ${message.role}`} key={message.id}><span>{message.role === 'assistant' ? <Sparkles size={12} /> : 'You'}</span><p>{message.content}</p></div>)}
+      {chat.isPending && <div className="chat-message assistant pending"><span><LoaderCircle className="spin" size={12} /></span><p>Checking the persisted evidence…</p></div>}
+    </div>
+    <div className="prompt-chips">{prompts.map((prompt) => <button type="button" key={prompt} disabled={chat.isPending} onClick={() => sendQuestion(prompt)}>{prompt}</button>)}</div>
+    <form className="chat-form" onSubmit={submit}>
+      <label className="sr-only" htmlFor="commander-question">Ask about this incident</label>
+      <input id="commander-question" value={input} onChange={(event) => setInput(event.target.value)} maxLength={1000} placeholder="Ask about this incident…" autoComplete="off" />
+      <button type="submit" aria-label="Send question" disabled={!input.trim() || chat.isPending}>{chat.isPending ? <LoaderCircle className="spin" /> : <Send />}</button>
+    </form>
+    <p className="chat-safety"><ShieldCheck size={11} />Chat is advisory and cannot execute money actions.</p>
+  </section>
+}
 function Trail({ label, done }: { label: string; done: boolean }) { return <div className="trail-item"><span className={done ? 'done' : ''}>{done ? <Check size={12} /> : <Clock3 size={12} />}</span><strong>{label}</strong><small>{done ? 'Complete' : 'Waiting'}</small></div> }
 function RateTooltip({ active, payload }: { active?: boolean; payload?: Array<{ value: number; payload: { window: string } }> }) { if (!active || !payload?.length) return null; return <div className="chart-tooltip"><span>{payload[0].payload.window}</span><strong>{payload[0].value.toFixed(1)}%</strong></div> }
 function EmptyState() { return <main className="fatal-state"><div className="fatal-icon safe"><ShieldCheck /></div><p className="eyebrow">Revenue Command Center</p><h1>No open payment incidents.</h1><p>The detector is monitoring payment traffic. Verified anomalies will appear automatically.</p></main> }
