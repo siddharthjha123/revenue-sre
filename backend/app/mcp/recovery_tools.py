@@ -82,6 +82,7 @@ class RecoveryAgentTools:
                             .where(
                                 IncidentEvidenceRecord.merchant_id == merchant_id,
                                 IncidentEvidenceRecord.incident_id == incident_id,
+                                IncidentEvidenceRecord.id.in_(verification.evidence_ids),
                                 PaymentEventFact.status == PaymentStatus.FAILED,
                             )
                             .order_by(PaymentEventFact.payment_id)

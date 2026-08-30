@@ -18,7 +18,7 @@ from backend.app.mcp.incident_tools import (
     IncidentNotFoundError,
     MCPConfigurationError,
 )
-from backend.app.schemas.incident import IncidentStatus
+from backend.app.schemas.incident import EvidenceKind, IncidentStatus
 from backend.tests.incident_test_support import (
     MERCHANT_A,
     MERCHANT_B,
@@ -108,6 +108,62 @@ async def test_get_incident_evidence_preserves_facts_and_filters_pii(mcp_context
     assert "must-not-leak" not in serialized
     assert "email" not in serialized
     assert "contact" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_verifier_excludes_expired_rolling_window_evidence(mcp_context) -> None:
+    factory, owned_incident = mcp_context
+    async with factory() as session:
+        async with session.begin():
+            session.add_all(
+                [
+                    IncidentEvidenceRecord(
+                        incident_id=owned_incident.id,
+                        merchant_id=MERCHANT_A,
+                        evidence_key="fact:expired-window",
+                        kind=EvidenceKind.RAZORPAY_FACT,
+                        summary="Historical failure outside the current window",
+                        source_reference="event_expired",
+                        details={
+                            "payment_id": "pay_EXPIRED",
+                            "event_type": "payment.failed",
+                            "amount_subunits": 100_000,
+                            "currency": "INR",
+                            "method": "upi",
+                            "bank": "HDFC",
+                            "error_reason": "payment_timed_out",
+                            "provider_event_at": owned_incident.baseline_window_start.isoformat(),
+                        },
+                    ),
+                    IncidentEvidenceRecord(
+                        incident_id=owned_incident.id,
+                        merchant_id=MERCHANT_A,
+                        evidence_key="metric:expired-window",
+                        kind=EvidenceKind.SANDBOX_METRIC,
+                        summary="Historical detector snapshot",
+                        source_reference="failure-spike-v1",
+                        details={
+                            "current_window_start": (
+                                owned_incident.baseline_window_start.isoformat()
+                            ),
+                            "current_window_end": owned_incident.current_window_start.isoformat(),
+                            "current_attempt_count": 5,
+                            "current_failure_count": 4,
+                            "revenue_at_risk_subunits": 160_000,
+                        },
+                    ),
+                ]
+            )
+
+    tools = IncidentInvestigationTools(detector_settings(), factory)
+    investigation = await tools.get_incident_evidence(owned_incident.id)
+    verification = await tools.verify_incident_evidence(owned_incident.id)
+
+    assert len(investigation.evidence) == 4
+    assert verification.verified is True
+    assert verification.failed_payment_count == 3
+    assert verification.revenue_at_risk_subunits == 60_000
+    assert all(check.passed for check in verification.checks)
 
 
 @pytest.mark.asyncio

@@ -196,6 +196,7 @@ class IncidentInvestigationTools:
             checks=checks,
             limitations=[
                 "This fallback is executed by Revenue SRE MCP, not Daytona sandbox.",
+                "Historical snapshots are retained but excluded from current-window totals.",
                 "Evidence consistency does not prove a provider's internal root cause.",
                 "Verification does not authorize or execute recovery.",
             ],
