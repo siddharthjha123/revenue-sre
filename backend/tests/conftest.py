@@ -9,6 +9,7 @@ from backend.app.schemas.recovery import RecoveryAction, RecoveryPlan
 
 MERCHANT_ID = UUID("c56a4180-65aa-42ec-a945-5fd21dec0538")
 INCIDENT_ID = UUID("16fd2706-8baf-433b-82eb-8c7fada847da")
+EVIDENCE_ID = UUID("f95b6aaf-8f73-43fc-a10e-5988c886f58d")
 
 
 @pytest.fixture
@@ -24,6 +25,7 @@ def recovery_plan() -> RecoveryPlan:
     return RecoveryPlan(
         merchant_id=MERCHANT_ID,
         incident_id=INCIDENT_ID,
+        evidence_ids=[EVIDENCE_ID],
         actions=[action],
         total_amount_subunits=100000,
         expires_at=datetime.now(UTC) + timedelta(hours=1),

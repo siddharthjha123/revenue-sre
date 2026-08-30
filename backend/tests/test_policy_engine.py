@@ -8,6 +8,7 @@ from backend.app.services.policy_engine import (
     evaluate_recovery_plan,
     evaluate_recovery_proposal,
 )
+from backend.tests.conftest import EVIDENCE_ID
 
 
 def test_execution_is_disabled_by_default(recovery_plan) -> None:
@@ -41,6 +42,7 @@ def proposal_context(**overrides) -> ProposalPolicyContext:
         "incident_currency": "INR",
         "incident_money_at_risk_subunits": 200000,
         "eligible_payment_ids": frozenset({"pay_TU17WFeXwe0HQr"}),
+        "eligible_evidence_ids": frozenset({str(EVIDENCE_ID)}),
         "maximum_plan_amount_subunits": 200000,
         "maximum_actions": 5,
         "maximum_plan_lifetime_minutes": 60,

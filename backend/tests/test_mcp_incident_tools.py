@@ -136,7 +136,7 @@ async def test_tools_require_trusted_server_merchant(mcp_context) -> None:
 
 
 @pytest.mark.asyncio
-async def test_mcp_protocol_exposes_two_read_only_tools_without_writes(
+async def test_mcp_protocol_marks_investigation_tools_read_only(
     mcp_context,
     monkeypatch,
 ) -> None:
@@ -161,8 +161,27 @@ async def test_mcp_protocol_exposes_two_read_only_tools_without_writes(
             {"incident_id": str(owned_incident.id)},
         )
 
-    assert set(by_name) == {"list_open_incidents", "get_incident_evidence"}
-    assert all(tool.annotations and tool.annotations.read_only_hint for tool in by_name.values())
+    assert set(by_name) == {
+        "list_open_incidents",
+        "get_incident_evidence",
+        "verify_incident_evidence",
+        "create_bounded_recovery_proposal",
+        "get_recovery_proposal",
+        "get_incident_audit_timeline",
+    }
+    read_only_names = {
+        "list_open_incidents",
+        "get_incident_evidence",
+        "verify_incident_evidence",
+        "get_recovery_proposal",
+        "get_incident_audit_timeline",
+    }
+    assert all(
+        by_name[name].annotations and by_name[name].annotations.read_only_hint
+        for name in read_only_names
+    )
+    proposal_tool = by_name["create_bounded_recovery_proposal"]
+    assert proposal_tool.annotations and not proposal_tool.annotations.read_only_hint
     assert all(
         tool.annotations and not tool.annotations.open_world_hint for tool in by_name.values()
     )

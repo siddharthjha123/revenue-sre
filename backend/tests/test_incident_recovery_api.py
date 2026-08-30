@@ -75,6 +75,14 @@ async def test_incident_proposal_approval_and_audit_endpoints(api_context) -> No
     proposal = proposal_response.json()
     assert proposal["policy_allowed"] is True
     assert proposal["status"] == "pending_approval"
+    assert len(proposal["evidence_ids"]) == 4
+
+    get_proposal_response = await client.get(
+        f"/proposals/{proposal['proposal_id']}",
+        headers=headers,
+    )
+    assert get_proposal_response.status_code == 200
+    assert get_proposal_response.json()["content_hash"] == proposal["content_hash"]
 
     approval_response = await client.post(
         f"/proposals/{proposal['proposal_id']}/approve",
