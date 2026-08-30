@@ -13,6 +13,7 @@ dependencies = [
     "alembic>=1.13,<2",
     "asyncpg>=0.31,<1",
     "fastapi>=0.115,<1",
+    "mcp>=2,<3",
     "prometheus-client>=0.21,<1",
     "pydantic-settings>=2.7,<3",
     "sqlalchemy>=2.0,<3",
@@ -22,6 +23,7 @@ dependencies = [
 [project.scripts]
 revenue-sre-worker = "backend.app.workers.__main__:main"
 revenue-sre-worker-healthcheck = "backend.app.workers.healthcheck:main"
+revenue-sre-mcp = "backend.app.mcp.__main__:main"
 
 [project.optional-dependencies]
 dev = [
