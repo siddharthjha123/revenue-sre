@@ -24,6 +24,7 @@ dependencies = [
 revenue-sre-worker = "backend.app.workers.__main__:main"
 revenue-sre-worker-healthcheck = "backend.app.workers.healthcheck:main"
 revenue-sre-mcp = "backend.app.mcp.__main__:main"
+revenue-sre-load-demo = "backend.scripts.load_demo_incident:main"
 
 [project.optional-dependencies]
 dev = [

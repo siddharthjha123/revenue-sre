@@ -75,6 +75,8 @@ class Settings(BaseSettings):
             "127.0.0.1:*",
             "localhost",
             "localhost:*",
+            "172.20.176.1",
+            "172.20.176.1:*",
         ]
     )
     mcp_allowed_origins: list[str] = Field(default_factory=list)
