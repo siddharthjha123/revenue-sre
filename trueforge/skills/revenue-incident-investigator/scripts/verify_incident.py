@@ -184,26 +184,20 @@ def _rate(failures: int, attempts: int) -> float:
     return failures / attempts if attempts else 0.0
 
 
-def _check_equal(
-    checks: list[dict[str, Any]], name: str, expected: Any, actual: Any
-) -> None:
+def _check_equal(checks: list[dict[str, Any]], name: str, expected: Any, actual: Any) -> None:
     checks.append(
         {"name": name, "passed": expected == actual, "expected": expected, "actual": actual}
     )
 
 
-def _check_close(
-    checks: list[dict[str, Any]], name: str, expected: float, actual: Any
-) -> None:
+def _check_close(checks: list[dict[str, Any]], name: str, expected: float, actual: Any) -> None:
     passed = (
         not isinstance(actual, bool)
         and isinstance(actual, (int, float))
         and math.isfinite(float(actual))
         and math.isclose(expected, float(actual), rel_tol=1e-9, abs_tol=1e-9)
     )
-    checks.append(
-        {"name": name, "passed": passed, "expected": expected, "actual": actual}
-    )
+    checks.append({"name": name, "passed": passed, "expected": expected, "actual": actual})
 
 
 def _find_sensitive_paths(value: Any, path: str = "$") -> list[str]:
@@ -233,4 +227,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

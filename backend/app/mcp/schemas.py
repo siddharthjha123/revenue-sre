@@ -61,4 +61,3 @@ class IncidentInvestigation(BaseModel):
 
     incident: IncidentSummary
     evidence: list[EvidenceItem]
-

@@ -164,8 +164,7 @@ async def test_mcp_protocol_exposes_two_read_only_tools_without_writes(
     assert set(by_name) == {"list_open_incidents", "get_incident_evidence"}
     assert all(tool.annotations and tool.annotations.read_only_hint for tool in by_name.values())
     assert all(
-        tool.annotations and not tool.annotations.open_world_hint
-        for tool in by_name.values()
+        tool.annotations and not tool.annotations.open_world_hint for tool in by_name.values()
     )
     assert list_result.is_error is False
     assert evidence_result.is_error is False
@@ -174,9 +173,7 @@ async def test_mcp_protocol_exposes_two_read_only_tools_without_writes(
     assert str(owned_incident.id) in evidence_result.structured_content["incident"]["incident_id"]
 
     async with factory() as session:
-        incident_count_after = await session.scalar(
-            select(func.count()).select_from(Incident)
-        )
+        incident_count_after = await session.scalar(select(func.count()).select_from(Incident))
         assert incident_count_after == incident_count_before
         assert (
             await session.scalar(select(func.count()).select_from(IncidentEvidenceRecord))

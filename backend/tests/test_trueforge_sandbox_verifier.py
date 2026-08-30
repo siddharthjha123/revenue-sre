@@ -94,9 +94,7 @@ def test_tampered_incident_fails_closed(
     result = verifier.verify_investigation(payload)
 
     assert result["verified"] is False
-    assert failed_check in {
-        check["name"] for check in result["checks"] if not check["passed"]
-    }
+    assert failed_check in {check["name"] for check in result["checks"] if not check["passed"]}
 
 
 def test_sensitive_fields_fail_sandbox_verification(verifier, investigation) -> None:
@@ -117,4 +115,3 @@ def test_invalid_counts_are_rejected(verifier, investigation) -> None:
 
     with pytest.raises(verifier.VerificationInputError, match="cannot exceed"):
         verifier.verify_investigation(payload)
-

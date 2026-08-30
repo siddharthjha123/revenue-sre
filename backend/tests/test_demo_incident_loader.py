@@ -33,8 +33,11 @@ def test_demo_payload_is_pii_free_and_signature_binds_exact_bytes() -> None:
     assert payload["payload"]["payment"]["entity"]["error_reason"] == "payment_timed_out"
     assert "email" not in str(payload)
     assert "contact" not in str(payload)
-    assert sign(raw_body, secret) == hmac.new(
-        b"demo-secret",
-        raw_body,
-        hashlib.sha256,
-    ).hexdigest()
+    assert (
+        sign(raw_body, secret)
+        == hmac.new(
+            b"demo-secret",
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+    )
