@@ -67,6 +67,19 @@ class Settings(BaseSettings):
     recovery_proposal_cooldown_minutes: int = Field(default=15, ge=0, le=10080)
     recovery_max_customer_contacts: int = Field(default=1, ge=0, le=3)
     execution_enabled: bool = False
+    mcp_host: str = Field(default="127.0.0.1", min_length=1, max_length=255)
+    mcp_port: int = Field(default=8010, ge=1, le=65_535)
+    mcp_allowed_hosts: list[str] = Field(
+        default_factory=lambda: [
+            "127.0.0.1",
+            "127.0.0.1:*",
+            "localhost",
+            "localhost:*",
+            "172.20.176.1",
+            "172.20.176.1:*",
+        ]
+    )
+    mcp_allowed_origins: list[str] = Field(default_factory=list)
 
 
 @lru_cache

@@ -24,6 +24,7 @@ logs/
 .runtime/
 .local/
 
+
 # Editors and operating systems
 .idea/
 .vscode/
@@ -32,3 +33,6 @@ Thumbs.db
 
 # Local pull-request drafting
 .github/pull_request_template.md
+
+# Agent Context
+agent.md
