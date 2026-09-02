@@ -87,10 +87,14 @@ async def test_incident_proposal_approval_and_audit_endpoints(api_context) -> No
     approval_response = await client.post(
         f"/proposals/{proposal['proposal_id']}/approve",
         headers=headers,
-        json={"decided_by": "merchant-owner"},
+        json={
+            "decided_by": "merchant-owner",
+            "reason": "Approved for a bounded test-mode recovery.",
+        },
     )
     assert approval_response.status_code == 201
     assert approval_response.json()["decision"] == "approved"
+    assert approval_response.json()["reason"] == "Approved for a bounded test-mode recovery."
     assert approval_response.json()["plan_hash"] == proposal["content_hash"]
 
     audit_response = await client.get(f"/incidents/{incident_id}/audit", headers=headers)
@@ -109,6 +113,58 @@ async def test_incident_endpoint_rejects_another_merchant(api_context) -> None:
     )
 
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_merchant_can_reject_proposal_once_with_immutable_reason(api_context) -> None:
+    client, incident_id = api_context
+    headers = {"X-Merchant-Id": str(MERCHANT_A)}
+    proposal_response = await client.post(
+        f"/incidents/{incident_id}/proposals",
+        headers=headers,
+        json={
+            "actions": [
+                {
+                    "payment_id": "pay_CURF0",
+                    "action_type": "allow_customer_retry",
+                    "amount_subunits": 10000,
+                    "rationale": "Offer one bounded retry.",
+                }
+            ],
+            "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
+            "created_by": "trueforge-agent",
+        },
+    )
+    proposal_id = proposal_response.json()["proposal_id"]
+
+    rejection = await client.post(
+        f"/proposals/{proposal_id}/reject",
+        headers=headers,
+        json={
+            "decided_by": "merchant-owner",
+            "reason": "Do not contact customers during the provider incident.",
+        },
+    )
+    replay = await client.post(
+        f"/proposals/{proposal_id}/reject",
+        headers=headers,
+        json={
+            "decided_by": "merchant-owner",
+            "reason": "Do not contact customers during the provider incident.",
+        },
+    )
+    conflicting_approval = await client.post(
+        f"/proposals/{proposal_id}/approve",
+        headers=headers,
+        json={"decided_by": "merchant-owner"},
+    )
+
+    assert rejection.status_code == 201
+    assert rejection.json()["decision"] == "rejected"
+    assert rejection.json()["reason"] == ("Do not contact customers during the provider incident.")
+    assert replay.status_code == 201
+    assert replay.json()["approval_id"] == rejection.json()["approval_id"]
+    assert conflicting_approval.status_code == 409
 
 
 @pytest.mark.asyncio
