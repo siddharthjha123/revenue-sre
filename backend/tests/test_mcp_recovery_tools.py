@@ -79,6 +79,35 @@ async def test_agent_creates_evidence_bound_policy_reviewed_proposal(
 
 
 @pytest.mark.asyncio
+async def test_agent_selects_only_payments_that_fit_policy_bounds(
+    recovery_context,
+) -> None:
+    factory, incident = recovery_context
+    settings = detector_settings(
+        recovery_max_plan_amount_subunits=25_000,
+        recovery_max_actions_per_plan=2,
+    )
+    tools = RecoveryAgentTools(settings, factory)
+
+    proposal = await tools.create_bounded_proposal(
+        incident_id=incident.id,
+        action_type=RecoveryActionType.CREATE_PAYMENT_LINK,
+        rationale="Select only verified failures inside the configured limits.",
+        expires_in_minutes=30,
+    )
+
+    assert proposal.policy_allowed is True
+    assert proposal.status == RecoveryPlanStatus.PENDING_APPROVAL
+    assert proposal.action_count == 1
+    assert proposal.total_amount_subunits == 10_000
+    assert proposal.maximum_recoverable_amount_subunits == 10_000
+    assert proposal.eligible_payment_count == 3
+    assert proposal.omitted_payment_count == 2
+    assert {action.payment_id for action in proposal.actions} == {"pay_CURF0"}
+    assert "maximum_actions:1" in proposal.stopping_conditions
+
+
+@pytest.mark.asyncio
 async def test_merchant_approval_changes_status_but_executes_nothing(
     recovery_context,
 ) -> None:
@@ -100,6 +129,7 @@ async def test_merchant_approval_changes_status_but_executes_nothing(
                 proposal_id=proposal.proposal_id,
                 decision=ApprovalDecisionType.APPROVED,
                 decided_by="merchant-owner",
+                reason=None,
                 correlation_id=CORRELATION_ID,
             )
 
