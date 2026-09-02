@@ -268,6 +268,7 @@ async def _decide(
                 proposal_id=proposal_id,
                 decision=decision,
                 decided_by=request.decided_by,
+                reason=request.reason,
                 correlation_id=get_correlation_id(),
             )
     except RecoveryNotFoundError as error:

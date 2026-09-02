@@ -164,10 +164,15 @@ class RecoveryProposalResponse(BaseModel):
     policy_allowed: bool
     policy_reasons: list[str]
     policy_version: str
+    eligible_payment_count: int = Field(ge=0)
+    omitted_payment_count: int = Field(ge=0)
     created_by: str
     created_at: AwareDatetime
     approval_required: bool = True
     execution_performed: bool = False
+    action_count: int = Field(ge=1)
+    maximum_recoverable_amount_subunits: int = Field(gt=0)
+    stopping_conditions: list[str] = Field(min_length=1)
 
 
 class ProposalDecisionRequest(BaseModel):
@@ -176,6 +181,7 @@ class ProposalDecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     decided_by: str = Field(min_length=1, max_length=256)
+    reason: str | None = Field(default=None, min_length=1, max_length=1000)
 
 
 class ProposalDecisionResponse(BaseModel):
@@ -188,5 +194,6 @@ class ProposalDecisionResponse(BaseModel):
     incident_id: UUID
     decision: str
     decided_by: str
+    reason: str | None = None
     decided_at: AwareDatetime
     plan_hash: str = Field(pattern=r"^[a-f0-9]{64}$")

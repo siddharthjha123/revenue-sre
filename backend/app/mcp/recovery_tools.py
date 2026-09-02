@@ -3,12 +3,13 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config import Settings, get_settings
 from ..database.base import AsyncSessionFactory
 from ..database.models.incident import IncidentEvidenceRecord
+from ..database.models.payment_attempt import PaymentAttempt
 from ..database.models.payment_event_fact import PaymentEventFact
 from ..database.repositories.recovery_repository import RecoveryRepository
 from ..schemas.payment import PaymentStatus
@@ -79,19 +80,42 @@ class RecoveryAgentTools:
                                 IncidentEvidenceRecord,
                                 IncidentEvidenceRecord.payment_event_fact_id == PaymentEventFact.id,
                             )
+                            .join(
+                                PaymentAttempt,
+                                and_(
+                                    PaymentAttempt.merchant_id == PaymentEventFact.merchant_id,
+                                    PaymentAttempt.payment_id == PaymentEventFact.payment_id,
+                                ),
+                            )
                             .where(
                                 IncidentEvidenceRecord.merchant_id == merchant_id,
                                 IncidentEvidenceRecord.incident_id == incident_id,
                                 IncidentEvidenceRecord.id.in_(verification.evidence_ids),
                                 PaymentEventFact.status == PaymentStatus.FAILED,
+                                PaymentAttempt.status == PaymentStatus.FAILED,
                             )
-                            .order_by(PaymentEventFact.payment_id)
+                            .order_by(
+                                PaymentEventFact.provider_event_at,
+                                PaymentEventFact.payment_id,
+                            )
                         )
                     ).all()
                 )
                 if not facts:
                     raise NoRecoverablePaymentsError(
                         "Incident has no failed evidence payments available for proposal"
+                    )
+                selected_facts = self._select_bounded_facts(
+                    facts,
+                    maximum_amount_subunits=min(
+                        self._settings.recovery_max_plan_amount_subunits,
+                        verification.revenue_at_risk_subunits,
+                    ),
+                    maximum_actions=self._settings.recovery_max_actions_per_plan,
+                )
+                if not selected_facts:
+                    raise NoRecoverablePaymentsError(
+                        "No failed evidence payment fits the configured recovery limits"
                     )
                 request = RecoveryProposalCreate(
                     actions=[
@@ -101,7 +125,7 @@ class RecoveryAgentTools:
                             amount_subunits=fact.amount_subunits,
                             rationale=rationale,
                         )
-                        for fact in facts
+                        for fact in selected_facts
                     ],
                     evidence_ids=verification.evidence_ids,
                     currency=facts[0].currency,
@@ -121,7 +145,43 @@ class RecoveryAgentTools:
                     incident_id=incident_id,
                     request=request,
                     correlation_id=uuid4(),
+                    generation_metadata={
+                        "eligible_payment_count": len({fact.payment_id for fact in facts}),
+                        "selected_action_count": len(selected_facts),
+                        "omitted_payment_count": len({fact.payment_id for fact in facts})
+                        - len(selected_facts),
+                    },
                 )
+
+    @staticmethod
+    def _select_bounded_facts(
+        facts: list[PaymentEventFact],
+        *,
+        maximum_amount_subunits: int,
+        maximum_actions: int,
+    ) -> list[PaymentEventFact]:
+        """Select a deterministic unpaid subset that fits every hard limit.
+
+        The oldest verified failures are considered first. Repeated failure
+        events for the same payment produce one action, and a payment that does
+        not fit the remaining amount budget is skipped rather than causing the
+        complete proposal to be rejected.
+        """
+
+        selected: list[PaymentEventFact] = []
+        selected_payment_ids: set[str] = set()
+        selected_amount = 0
+        for fact in facts:
+            if fact.payment_id in selected_payment_ids:
+                continue
+            if len(selected) >= maximum_actions:
+                break
+            if selected_amount + fact.amount_subunits > maximum_amount_subunits:
+                continue
+            selected.append(fact)
+            selected_payment_ids.add(fact.payment_id)
+            selected_amount += fact.amount_subunits
+        return selected
 
     async def get_proposal(self, proposal_id: UUID) -> RecoveryProposalResponse:
         """Read one merchant-owned proposal and its current approval status."""

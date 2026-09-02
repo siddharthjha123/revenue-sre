@@ -108,6 +108,7 @@ class RecoveryRepository:
         proposal: RecoveryProposal,
         decision: ApprovalDecisionType,
         decided_by: str,
+        reason: str | None,
         decided_at: datetime,
     ) -> ApprovalRecord:
         record = ApprovalRecord(
@@ -116,6 +117,7 @@ class RecoveryRepository:
             incident_id=proposal.incident_id,
             decision=decision,
             decided_by=decided_by,
+            reason=reason,
             decided_at=decided_at,
             plan_hash=proposal.content_hash,
         )
