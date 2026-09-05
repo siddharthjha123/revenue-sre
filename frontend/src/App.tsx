@@ -15,9 +15,9 @@ import { ErrorState, NoIncidentsState } from './components/states/AppStates'
 import {
   decideProposal,
   getActiveProposal,
+  getAuditTrail,
   getDashboardSummary,
   getIncident,
-  getIncidentAudit,
   getIncidents,
 } from './lib/api'
 import { incidentIsOpen } from './lib/incidents'
@@ -67,9 +67,9 @@ function App() {
     refetchInterval: view === 'dashboard' ? 10_000 : false,
   })
   const auditQuery = useQuery({
-    queryKey: ['incident-audit', activeIncidentId],
-    queryFn: () => getIncidentAudit(activeIncidentId!),
-    enabled: Boolean(activeIncidentId),
+    queryKey: ['merchant-audit'],
+    queryFn: getAuditTrail,
+    refetchInterval: view === 'audit' ? 5_000 : 15_000,
   })
   const proposalQuery = useQuery({
     queryKey: ['incident-proposal', activeIncidentId],
@@ -96,7 +96,7 @@ function App() {
     setRecoveryWorkflow({ incidentId: activeIncidentId, stage, error })
     if (stage === 'persisting' && activeIncidentId) {
       void queryClient.invalidateQueries({ queryKey: ['incident-proposal', activeIncidentId] })
-      void queryClient.invalidateQueries({ queryKey: ['incident-audit', activeIncidentId] })
+      void queryClient.invalidateQueries({ queryKey: ['merchant-audit'] })
     }
   }
 
@@ -115,7 +115,7 @@ function App() {
         description: 'The immutable merchant decision is now in the audit timeline.',
       })
       void queryClient.invalidateQueries({ queryKey: ['incident-proposal'] })
-      void queryClient.invalidateQueries({ queryKey: ['incident-audit'] })
+      void queryClient.invalidateQueries({ queryKey: ['merchant-audit'] })
     },
     onError: (error) => toast.error('Decision could not be recorded', { description: error.message }),
   })
@@ -178,6 +178,7 @@ function App() {
                   activeIncident={activeIncident}
                   onAttachIncident={setSelectedId}
                   onRecoveryStage={updateRecoveryWorkflow}
+                  proposal={proposalQuery.data}
                 />
                 <DecisionPanel
                   incident={activeIncident}

@@ -10,12 +10,18 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Bot, Check, LoaderCircle, Send, ShieldCheck, Sparkles, Trash2 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 
-import { createBoundedProposal, type Incident, type Proposal } from '../../lib/api'
+import {
+  createBoundedProposal,
+  getActiveProposal,
+  type Incident,
+  type Proposal,
+} from '../../lib/api'
 import { formatMoney } from '../../lib/format'
 import { evidenceIsVerified, incidentLabel } from '../../lib/incidents'
 import { getExecutiveBriefing, streamIncidentTurn } from '../../lib/trueforge'
 import {
   isRecoveryProposalRequest,
+  isProposalStatusRequest,
   type RecoveryWorkflowStage,
 } from '../../lib/recoveryWorkflow'
 import { RobotAvatar } from '../ui/RobotAvatar'
@@ -31,6 +37,7 @@ type ChatMessage = {
 interface RevenueOperatorProps {
   activeIncident: Incident | null
   incidents: Incident[]
+  proposal: Proposal | null | undefined
   onAttachIncident: (incidentId: string) => void
   onRecoveryStage: (stage: RecoveryWorkflowStage, error?: string) => void
 }
@@ -38,6 +45,7 @@ interface RevenueOperatorProps {
 export function RevenueOperator({
   activeIncident,
   incidents,
+  proposal,
   onAttachIncident,
   onRecoveryStage,
 }: RevenueOperatorProps) {
@@ -83,16 +91,40 @@ export function RevenueOperator({
       message,
       responseId,
       proposalRequested,
+      proposalStatusRequested,
     }: {
       message: string
       responseId: number
       proposalRequested: boolean
+      proposalStatusRequested: boolean
     }) => {
       if (!activeIncident) throw new Error('Attach an incident before asking a question.')
+      if (proposalStatusRequested) {
+        setActivity('Checking persisted proposal state')
+        const persistedProposal = await getActiveProposal(activeIncident.incident_id)
+        return {
+          content: proposalStatusConfirmation(persistedProposal),
+          toolsCompleted: true,
+          proposalCreated: false,
+          proposalAvailable: Boolean(persistedProposal),
+          proposalReused: true,
+        }
+      }
       if (proposalRequested) {
+        const persistedProposal = proposal ?? await getActiveProposal(activeIncident.incident_id)
+        if (persistedProposal) {
+          onRecoveryStage('ready')
+          return {
+            content: proposalStatusConfirmation(persistedProposal),
+            toolsCompleted: true,
+            proposalCreated: false,
+            proposalAvailable: true,
+            proposalReused: true,
+          }
+        }
         setActivity('Verifying evidence for bounded recovery')
         onRecoveryStage('investigating')
-        const proposal = await createBoundedProposal(activeIncident.incident_id)
+        const createdProposal = await createBoundedProposal(activeIncident.incident_id)
         onRecoveryStage('evidence_verified')
         await pause(260)
         setActivity('Applying deterministic recovery policy')
@@ -101,18 +133,21 @@ export function RevenueOperator({
         setActivity('Loading proposal for merchant review')
         onRecoveryStage('persisting')
         return {
-          content: proposalConfirmation(proposal),
+          content: proposalConfirmation(createdProposal),
           toolsCompleted: true,
           proposalCreated: true,
+          proposalAvailable: true,
+          proposalReused: false,
         }
       }
-      return streamIncidentTurn(activeIncident, message, {
+      const result = await streamIncidentTurn(activeIncident, message, proposal, {
         onDelta: (content) => setMessages((current) => current.map((item) =>
           item.id === responseId ? { ...item, content, streaming: true } : item,
         )),
         onStatus: setActivity,
         onRecoveryStage: proposalRequested ? (stage) => onRecoveryStage(stage) : undefined,
       })
+      return { ...result, proposalAvailable: false, proposalReused: false }
     },
     onSuccess: (result, { responseId, proposalRequested }) => {
       setMessages((current) => current.map((item) =>
@@ -121,15 +156,15 @@ export function RevenueOperator({
       setActivity(result.toolsCompleted ? 'Investigation complete · evidence connected' : 'Response complete')
       if (proposalRequested) {
         onRecoveryStage(
-          result.proposalCreated ? 'persisting' : 'failed',
-          result.proposalCreated
+          result.proposalReused ? 'ready' : result.proposalCreated ? 'persisting' : 'failed',
+          result.proposalCreated || result.proposalReused
             ? undefined
             : 'The agent completed without creating a bounded proposal.',
         )
       }
       if (activeIncident) {
         void queryClient.invalidateQueries({ queryKey: ['incident-proposal', activeIncident.incident_id] })
-        void queryClient.invalidateQueries({ queryKey: ['incident-audit', activeIncident.incident_id] })
+        void queryClient.invalidateQueries({ queryKey: ['merchant-audit'] })
         void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] })
       }
     },
@@ -152,7 +187,8 @@ export function RevenueOperator({
     if (!message || chat.isPending || briefingStreaming || !activeIncident) return
     const userId = messageSequence.current++
     const responseId = messageSequence.current++
-    const proposalRequested = isRecoveryProposalRequest(message)
+    const proposalStatusRequested = isProposalStatusRequest(message)
+    const proposalRequested = !proposalStatusRequested && isRecoveryProposalRequest(message)
     if (proposalRequested) onRecoveryStage('requested')
     setMessages((current) => [
       ...current,
@@ -167,7 +203,7 @@ export function RevenueOperator({
     ])
     setInput('')
     setActivity('Opening TrueForge agent session')
-    chat.mutate({ message, responseId, proposalRequested })
+    chat.mutate({ message, responseId, proposalRequested, proposalStatusRequested })
   }
 
   const submit = (event: FormEvent) => {
@@ -323,4 +359,20 @@ function proposalConfirmation(proposal: Proposal) {
     `- **Scope:** ${proposal.action_count} actions, up to ${formatMoney(proposal.maximum_recoverable_amount_subunits)}\n` +
     `- **Policy:** ${proposal.policy_version}; ${proposal.omitted_payment_count ?? 0} eligible payments omitted by limits\n` +
     `- **Safety:** ${approvalState}. No Razorpay action was executed.`
+}
+
+function proposalStatusConfirmation(proposal: Proposal | null) {
+  if (!proposal) {
+    return 'No bounded recovery proposal is currently persisted for this incident. ' +
+      'If you approve, I can prepare one from verified evidence and deterministic policy limits.'
+  }
+
+  const execution = proposal.execution_performed
+    ? 'Recovery execution is recorded.'
+    : 'No Razorpay recovery action has been executed.'
+  return `Yes. Proposal **${proposal.proposal_id}** exists in the backend.\n` +
+    `- **Status:** ${proposal.status.replaceAll('_', ' ')}\n` +
+    `- **Scope:** ${proposal.action_count} actions, up to ${formatMoney(proposal.maximum_recoverable_amount_subunits)}\n` +
+    `- **Decision:** ${proposal.status === 'pending_approval' ? 'Awaiting merchant approval' : `Merchant decision is ${proposal.status.replaceAll('_', ' ')}`}\n` +
+    `- **Execution:** ${execution}`
 }

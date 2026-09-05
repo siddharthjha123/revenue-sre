@@ -1,6 +1,6 @@
 import { TrueForge } from '@truefoundry/trueforge-sdk'
 
-import type { Incident } from './api'
+import type { Incident, Proposal } from './api'
 import { formatMoney, formatPercent } from './format'
 import { evidenceIsVerified, incidentLabel } from './incidents'
 import { isRecoveryProposalRequest, type RecoveryWorkflowStage } from './recoveryWorkflow'
@@ -53,6 +53,7 @@ export function getExecutiveBriefing(incident: Incident | null, incidentCount: n
 export async function streamIncidentTurn(
   incident: Incident,
   merchantMessage: string,
+  proposal: Proposal | null | undefined,
   callbacks: AgentTurnCallbacks,
 ): Promise<AgentTurnResult> {
   const sessionId = await getOrCreateSession(incident.incident_id)
@@ -62,7 +63,7 @@ export async function streamIncidentTurn(
 
   const firstAttempt = await runAgentTurn(
     sessionId,
-    [{ type: 'user.message', content: buildAgentInput(incident, merchantMessage) }],
+    [{ type: 'user.message', content: buildAgentInput(incident, merchantMessage, proposal) }],
     callbacks,
   )
 
@@ -261,7 +262,11 @@ async function getOrCreateSession(incidentId: string) {
   return pendingSession
 }
 
-function buildAgentInput(incident: Incident, merchantMessage: string) {
+function buildAgentInput(
+  incident: Incident,
+  merchantMessage: string,
+  proposal: Proposal | null | undefined,
+) {
   const verification = evidenceIsVerified(incident) ? 'verified' : 'not yet verified in the UI'
   if (isRecoveryProposalRequest(merchantMessage)) {
     return `Explicit merchant request: call create_bounded_recovery_proposal now.
@@ -293,6 +298,9 @@ Baseline failures: ${incident.baseline_failure_count}
 Baseline failure rate: ${incident.baseline_failure_rate}
 Revenue at risk: ${incident.revenue_at_risk_subunits} ${incident.currency} subunits
 Dashboard evidence state: ${verification}
+Persisted proposal: ${proposal
+    ? `${proposal.proposal_id}; status=${proposal.status}; execution_performed=${proposal.execution_performed}`
+    : 'none returned by the backend'}
 
 Merchant request: ${merchantMessage}
 

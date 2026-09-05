@@ -16,9 +16,21 @@ export interface RecoveryWorkflowState {
 
 const PROPOSAL_VERBS = /\b(create|prepare|generate|build|draft|plan)\b/i
 const PROPOSAL_NOUN = /\b(bounded\s+)?(recovery\s+)?proposal\b/i
+const PROPOSAL_STATUS_WORDS = /\b(exist|exists|existing|already|status|current|ready|created|made)\b/i
+const AFFIRMATIVE_REPLY = /^\s*(yes|yeah|yep|sure|okay|ok|please|go ahead)\b/i
 
 export function isRecoveryProposalRequest(message: string) {
-  return PROPOSAL_VERBS.test(message) && PROPOSAL_NOUN.test(message)
+  return PROPOSAL_NOUN.test(message) && (
+    PROPOSAL_VERBS.test(message) || AFFIRMATIVE_REPLY.test(message)
+  )
+}
+
+export function isProposalStatusRequest(message: string) {
+  return (
+    PROPOSAL_NOUN.test(message) &&
+    PROPOSAL_STATUS_WORDS.test(message) &&
+    !PROPOSAL_VERBS.test(message)
+  )
 }
 
 export function recoveryWorkflowIsActive(stage: RecoveryWorkflowStage) {
