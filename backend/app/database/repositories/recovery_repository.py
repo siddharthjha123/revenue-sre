@@ -112,6 +112,9 @@ class RecoveryRepository:
                     [
                         RecoveryPlanStatus.PENDING_APPROVAL,
                         RecoveryPlanStatus.APPROVED,
+                        RecoveryPlanStatus.EXECUTING,
+                        RecoveryPlanStatus.COMPLETED,
+                        RecoveryPlanStatus.FAILED,
                     ]
                 ),
             )

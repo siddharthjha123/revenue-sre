@@ -86,10 +86,27 @@ class DashboardRepository:
             )
         ).one()
 
+        recovered_for_incident = (
+            select(func.coalesce(func.sum(RecoveryProposalAction.recovered_amount_subunits), 0))
+            .join(
+                RecoveryProposal,
+                RecoveryProposal.id == RecoveryProposalAction.proposal_id,
+            )
+            .where(RecoveryProposal.incident_id == Incident.id)
+            .correlate(Incident)
+            .scalar_subquery()
+        )
+        remaining_incident_risk = case(
+            (
+                Incident.revenue_at_risk_subunits > recovered_for_incident,
+                Incident.revenue_at_risk_subunits - recovered_for_incident,
+            ),
+            else_=0,
+        )
         open_revenue_at_risk = await self._money_totals(
             select(
                 Incident.currency,
-                func.sum(Incident.revenue_at_risk_subunits),
+                func.sum(remaining_incident_risk),
             )
             .where(
                 Incident.merchant_id == merchant_id,

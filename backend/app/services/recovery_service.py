@@ -1,5 +1,6 @@
 """Policy-gated recovery proposal and immutable approval workflow."""
 
+import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
@@ -339,10 +340,31 @@ class RecoveryService:
 
         provider = adapter or self._payment_link_adapter()
         proposal.status = RecoveryPlanStatus.EXECUTING
-        for action in actions:
+        provider_unavailable = False
+        provider_success_count = 0
+        for action_index, action in enumerate(actions):
             if action.execution_status == RecoveryExecutionStatus.SUCCEEDED:
                 continue
             if action.execution_status == RecoveryExecutionStatus.FAILED:
+                continue
+            if provider_unavailable:
+                action.execution_status = RecoveryExecutionStatus.SKIPPED
+                action.execution_error_code = "provider_unavailable_after_failure"
+                await repository.add_audit(
+                    self._audit(
+                        merchant_id=merchant_id,
+                        correlation_id=correlation_id,
+                        incident_id=proposal.incident_id,
+                        proposal_id=proposal.id,
+                        event_type=AuditEventType.ACTION_SKIPPED,
+                        actor_type=AuditActorType.SYSTEM,
+                        actor_id=executed_by,
+                        details={
+                            "action_id": str(action.id),
+                            "reason": action.execution_error_code,
+                        },
+                    )
+                )
                 continue
             payment = await session.scalar(
                 select(PaymentAttempt).where(
@@ -391,6 +413,17 @@ class RecoveryService:
             try:
                 result = await provider.create_payment_link(arguments)
             except RazorpayMCPError:
+                # A short retry absorbs transient MCP/network failures. Reusing
+                # the immutable reference id also prevents a different link
+                # from being created if the first response was interrupted.
+                await asyncio.sleep(1)
+                try:
+                    result = await provider.create_payment_link(arguments)
+                except RazorpayMCPError:
+                    provider_unavailable = True
+                    result = None
+
+            if result is None:
                 action.execution_status = RecoveryExecutionStatus.FAILED
                 action.execution_reference_id = reference_id
                 action.execution_error_code = "razorpay_mcp_create_failed"
@@ -434,6 +467,12 @@ class RecoveryService:
                     },
                 )
             )
+            provider_success_count += 1
+            if provider_success_count % 5 == 0 and action_index < len(actions) - 1:
+                # Razorpay's test MCP rejects a burst after five successful
+                # Payment Link creations. Let its short provider window reset
+                # before continuing the same merchant-approved plan.
+                await asyncio.sleep(5)
 
         proposal.status = (
             RecoveryPlanStatus.COMPLETED
@@ -470,6 +509,13 @@ class RecoveryService:
                     .where(
                         IncidentEvidenceRecord.merchant_id == incident.merchant_id,
                         IncidentEvidenceRecord.incident_id == incident.id,
+                        PaymentEventFact.status == PaymentStatus.FAILED,
+                        PaymentEventFact.currency == incident.currency,
+                        PaymentEventFact.method == incident.method,
+                        PaymentEventFact.bank == incident.bank,
+                        PaymentEventFact.error_reason == incident.error_reason,
+                        PaymentEventFact.provider_event_at >= incident.current_window_start,
+                        PaymentEventFact.provider_event_at <= incident.current_window_end,
                     )
                 )
             ).all()

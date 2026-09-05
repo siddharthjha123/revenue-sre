@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -13,9 +14,15 @@ from backend.app.config import get_settings
 from backend.app.database.base import Base, get_db_session
 from backend.app.database.models.incident import Incident
 from backend.app.database.models.payment_attempt import PaymentAttempt
+from backend.app.database.models.recovery import RecoveryProposal, RecoveryProposalAction
 from backend.app.main import create_app
 from backend.app.schemas.incident import IncidentStatus, IncidentType
 from backend.app.schemas.payment import PaymentMethod, PaymentStatus
+from backend.app.schemas.recovery import (
+    RecoveryActionType,
+    RecoveryExecutionStatus,
+    RecoveryPlanStatus,
+)
 from backend.tests.incident_test_support import MERCHANT_A, MERCHANT_B, detector_settings
 
 
@@ -28,6 +35,7 @@ async def dashboard_context():
     now = datetime.now(UTC)
     async with factory() as session:
         async with session.begin():
+            open_incident = _incident("open", IncidentStatus.OPEN, 30_000)
             session.add_all(
                 [
                     _payment("A1", PaymentStatus.CAPTURED, 10_000, now),
@@ -40,11 +48,45 @@ async def dashboard_context():
                         now - timedelta(days=2),
                     ),
                     _payment("B1", PaymentStatus.CAPTURED, 9_999_999, now, MERCHANT_B),
-                    _incident("open", IncidentStatus.OPEN, 30_000),
+                    open_incident,
                     _incident("investigating", IncidentStatus.INVESTIGATING, 20_000),
                     _incident("resolved", IncidentStatus.RESOLVED, 90_000),
                     _incident("other-merchant", IncidentStatus.OPEN, 9_999_999, MERCHANT_B),
                 ]
+            )
+            await session.flush()
+            proposal = RecoveryProposal(
+                id=uuid4(),
+                merchant_id=MERCHANT_A,
+                incident_id=open_incident.id,
+                status=RecoveryPlanStatus.COMPLETED,
+                total_amount_subunits=10_000,
+                currency="INR",
+                maximum_customer_contacts=1,
+                expires_at=now + timedelta(minutes=30),
+                content_hash="a" * 64,
+                policy_version="test-v1",
+                policy_allowed=True,
+                policy_reasons=[],
+                eligible_payment_count=1,
+                omitted_payment_count=0,
+                evidence_ids=[],
+                created_by="test-agent",
+            )
+            session.add(proposal)
+            session.add(
+                RecoveryProposalAction(
+                    proposal_id=proposal.id,
+                    payment_id="pay_A3",
+                    action_type=RecoveryActionType.CREATE_PAYMENT_LINK,
+                    amount_subunits=10_000,
+                    rationale="Test verified recovery.",
+                    requires_approval=True,
+                    execution_status=RecoveryExecutionStatus.SUCCEEDED,
+                    recovered_payment_id="pay_recovered_A3",
+                    recovered_amount_subunits=10_000,
+                    recovered_at=now,
+                )
             )
 
     async def override_session() -> AsyncGenerator[AsyncSession, None]:
@@ -75,8 +117,8 @@ async def test_dashboard_summary_uses_real_merchant_aggregates(dashboard_context
     assert summary["captured_revenue_today"] == [{"currency": "INR", "amount_subunits": 30_000}]
     assert summary["total_incident_count"] == 3
     assert summary["open_incident_count"] == 2
-    assert summary["open_revenue_at_risk"] == [{"currency": "INR", "amount_subunits": 50_000}]
-    assert summary["recovered_revenue_today"] == []
+    assert summary["open_revenue_at_risk"] == [{"currency": "INR", "amount_subunits": 40_000}]
+    assert summary["recovered_revenue_today"] == [{"currency": "INR", "amount_subunits": 10_000}]
     assert summary["reporting_timezone"] == "Asia/Kolkata"
 
 

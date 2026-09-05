@@ -48,8 +48,15 @@ class PaymentEventPipeline:
         await self._normalizer.normalize_and_persist(event, session)
         if event.event_type == SupportedWebhookEvent.PAYMENT_LINK_PAID:
             await self._outcomes.record_payment_link_paid(event, session)
-        await self._detector.detect(
-            session,
-            merchant_id=event.merchant_id,
-            correlation_id=event.correlation_id,
-        )
+        # A failure-spike detector must only advance when a new failure arrives.
+        # Recovery authorizations/captures have later provider timestamps and used
+        # to slide the detector window forward, rewriting unrelated open incidents
+        # into misleading tail-only snapshots such as 8/8. Captured events are
+        # still persisted above and will be included when the next failure runs
+        # detection.
+        if event.event_type == SupportedWebhookEvent.PAYMENT_FAILED:
+            await self._detector.detect(
+                session,
+                merchant_id=event.merchant_id,
+                correlation_id=event.correlation_id,
+            )

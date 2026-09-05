@@ -41,6 +41,7 @@ class RazorpayMCPPaymentLinkAdapter:
             headers={"Authorization": self._authorization},
             timeout=self._timeout_seconds,
         )
+        result = None
         try:
             async with http_client:
                 async with streamable_http_client(
@@ -51,7 +52,12 @@ class RazorpayMCPPaymentLinkAdapter:
                         await session.initialize()
                         result = await session.call_tool(self.TOOL_NAME, arguments)
         except Exception as error:
-            raise RazorpayMCPError("Razorpay MCP could not create the payment link") from error
+            # Some MCP transports raise while closing an otherwise successful
+            # stream. Once call_tool returned a complete result, treating that
+            # cleanup failure as a failed creation produces false-negative audit
+            # records and can encourage a duplicate retry.
+            if result is None:
+                raise RazorpayMCPError("Razorpay MCP could not create the payment link") from error
 
         if result.is_error:
             raise RazorpayMCPError("Razorpay MCP rejected the payment-link request")

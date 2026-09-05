@@ -83,10 +83,11 @@ class RecoveryOutcomeService:
         actions = list(await repository.list_actions(proposal.id))
         incident = await IncidentRepository(session).get(event.merchant_id, proposal.incident_id)
         if incident is not None:
+            recovered_total = sum(item.recovered_amount_subunits or 0 for item in actions)
             incident.status = (
                 IncidentStatus.RESOLVED
-                if all(item.recovered_at is not None for item in actions)
-                else IncidentStatus.MITIGATED
+                if recovered_total >= incident.revenue_at_risk_subunits
+                else IncidentStatus.INVESTIGATING
             )
         await session.flush()
 
