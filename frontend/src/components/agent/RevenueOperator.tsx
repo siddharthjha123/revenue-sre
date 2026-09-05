@@ -1,0 +1,260 @@
+import {
+  type DragEvent,
+  type FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Bot, Check, LoaderCircle, Send, ShieldCheck, Sparkles, Trash2 } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
+
+import type { Incident } from '../../lib/api'
+import { evidenceIsVerified, incidentLabel } from '../../lib/incidents'
+import { getExecutiveBriefing, streamIncidentTurn } from '../../lib/trueforge'
+import { RobotAvatar } from '../ui/RobotAvatar'
+
+type ChatMessage = {
+  id: number
+  role: 'assistant' | 'user'
+  content: string
+  specialist?: string
+  streaming?: boolean
+}
+
+interface RevenueOperatorProps {
+  activeIncident: Incident | null
+  incidents: Incident[]
+  onAttachIncident: (incidentId: string) => void
+}
+
+export function RevenueOperator({ activeIncident, incidents, onAttachIncident }: RevenueOperatorProps) {
+  const queryClient = useQueryClient()
+  const [input, setInput] = useState('')
+  const briefing = useMemo(
+    () => getExecutiveBriefing(activeIncident, incidents.length),
+    [activeIncident, incidents.length],
+  )
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { id: 0, role: 'assistant', content: '', specialist: 'Revenue operator', streaming: true },
+  ])
+  const [activity, setActivity] = useState('Preparing live incident briefing')
+  const [briefingStreaming, setBriefingStreaming] = useState(true)
+  const transcriptRef = useRef<HTMLDivElement>(null)
+  const messageSequence = useRef(1)
+
+  useEffect(() => {
+    let characterIndex = 0
+    const timer = window.setInterval(() => {
+      characterIndex = Math.min(characterIndex + 3, briefing.length)
+      setMessages((current) => current.map((message) =>
+        message.id === 0
+          ? { ...message, content: briefing.slice(0, characterIndex), streaming: characterIndex < briefing.length }
+          : message,
+      ))
+      if (characterIndex === briefing.length) {
+        window.clearInterval(timer)
+        setBriefingStreaming(false)
+        setActivity('Specialists ready')
+      }
+    }, 18)
+    return () => window.clearInterval(timer)
+  }, [briefing])
+
+  useEffect(() => {
+    const transcript = transcriptRef.current
+    if (transcript) transcript.scrollTop = transcript.scrollHeight
+  }, [activity, messages])
+
+  const chat = useMutation({
+    mutationFn: async ({ message, responseId }: { message: string; responseId: number }) => {
+      if (!activeIncident) throw new Error('Attach an incident before asking a question.')
+      return streamIncidentTurn(activeIncident, message, {
+        onDelta: (content) => setMessages((current) => current.map((item) =>
+          item.id === responseId ? { ...item, content, streaming: true } : item,
+        )),
+        onStatus: setActivity,
+      })
+    },
+    onSuccess: (result, { responseId }) => {
+      setMessages((current) => current.map((item) =>
+        item.id === responseId ? { ...item, content: result.content, streaming: false } : item,
+      ))
+      setActivity(result.toolsCompleted ? 'Investigation complete · evidence connected' : 'Response complete')
+      if (activeIncident) {
+        void queryClient.invalidateQueries({ queryKey: ['incident-proposal', activeIncident.incident_id] })
+        void queryClient.invalidateQueries({ queryKey: ['incident-audit', activeIncident.incident_id] })
+        void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] })
+      }
+    },
+    onError: (error, { responseId }) => {
+      setMessages((current) => current.map((item) => item.id === responseId
+        ? {
+            ...item,
+            content: `I could not complete the TrueForge investigation: ${error.message}`,
+            streaming: false,
+          }
+        : item,
+      ))
+      setActivity('Agent connection needs attention')
+    },
+  })
+
+  const send = (question: string) => {
+    const message = question.trim()
+    if (!message || chat.isPending || briefingStreaming || !activeIncident) return
+    const userId = messageSequence.current++
+    const responseId = messageSequence.current++
+    setMessages((current) => [
+      ...current,
+      { id: userId, role: 'user', content: message },
+      {
+        id: responseId,
+        role: 'assistant',
+        content: '',
+        specialist: 'Incident Commander',
+        streaming: true,
+      },
+    ])
+    setInput('')
+    setActivity('Opening TrueForge agent session')
+    chat.mutate({ message, responseId })
+  }
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    send(input)
+  }
+
+  const acceptDrop = (event: DragEvent) => {
+    event.preventDefault()
+    const incidentId = event.dataTransfer.getData('application/revenue-sre-incident')
+    if (incidentId) onAttachIncident(incidentId)
+  }
+
+  const clear = () => {
+    chat.reset()
+    setInput('')
+    setMessages([])
+    setActivity('Conversation cleared · agent context retained')
+  }
+
+  const prompts = [
+    ['Summarize incident', 'Give me a concise summary of this incident.'],
+    ['Explain evidence', 'Explain the evidence and what is confirmed.'],
+    ['Safest next step', 'What is the safest next step?'],
+    ['Plan recovery', 'Describe a bounded recovery proposal for this incident.'],
+  ] as const
+
+  return (
+    <section
+      className={`mission-panel operator-panel ${activeIncident ? '' : 'is-empty'}`}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={acceptDrop}
+      aria-label="Revenue operator"
+    >
+      <div className="mission-panel-heading operator-heading">
+        <div><span className="panel-index">02</span><div><p>AI operations</p><h2>Revenue operator</h2></div></div>
+        <div className="operator-status"><span className="live-orb" />Online</div>
+      </div>
+
+      <div className="operator-roster">
+        <RobotAvatar active={chat.isPending || briefingStreaming} />
+        <div>
+          <strong>{activity}</strong>
+          <span>Incident Commander · Evidence Verifier · Recovery Planner</span>
+        </div>
+        <span className="roster-count">3 agents</span>
+      </div>
+
+      <div className="attached-context">
+        <div><span>Attached context</span><strong>{activeIncident ? incidentLabel(activeIncident) : 'Drop an incident here'}</strong></div>
+        {activeIncident && (
+          <span className={evidenceIsVerified(activeIncident) ? 'context-verified' : 'context-warning'}>
+            {evidenceIsVerified(activeIncident) ? <ShieldCheck /> : <Bot />}
+            {evidenceIsVerified(activeIncident) ? 'Verified' : 'Check evidence'}
+          </span>
+        )}
+      </div>
+
+      <div className="operator-transcript" aria-live="polite" ref={transcriptRef}>
+        <AnimatePresence initial={false}>
+          {messages.map((message) => (
+            <motion.div
+              key={message.id}
+              className={`operator-message ${message.role}`}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              {message.role === 'assistant' && (
+                <span className="message-author"><Sparkles />{message.specialist}</span>
+              )}
+              {message.role === 'assistant'
+                ? <AgentMessageBody content={message.content} />
+                : <p>{message.content}</p>}
+              {message.streaming && message.content && <i className="typing-caret" aria-hidden="true" />}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+        {chat.isPending && !messages.at(-1)?.content && (
+          <div className="agent-handoff">
+            <span><Check />Context secured</span><i /><span><LoaderCircle className="spin" />Incident Commander</span>
+          </div>
+        )}
+      </div>
+
+      <div className="operator-composer">
+        <div className="operator-prompts">
+          {prompts.map(([label, prompt]) => (
+            <button key={label} disabled={!activeIncident || chat.isPending || briefingStreaming} onClick={() => send(prompt)}>{label}</button>
+          ))}
+        </div>
+        <form onSubmit={submit}>
+          <input
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            placeholder={activeIncident ? 'Ask the operator about this incident…' : 'Attach an incident to begin…'}
+            disabled={!activeIncident}
+            maxLength={1000}
+            aria-label="Message Revenue operator"
+          />
+          <button type="submit" disabled={!input.trim() || chat.isPending || briefingStreaming || !activeIncident} aria-label="Send message"><Send /></button>
+          <button type="button" onClick={clear} disabled={chat.isPending || messages.length === 0} aria-label="Clear visible conversation while retaining agent context"><Trash2 /></button>
+        </form>
+        <p><ShieldCheck />Advisory channel only. Money actions cannot execute from chat.</p>
+      </div>
+    </section>
+  )
+}
+
+function AgentMessageBody({ content }: { content: string }) {
+  const lines = content.split('\n').map((line) => line.trim()).filter(Boolean)
+
+  return (
+    <div className="operator-message-body">
+      {lines.map((line, index) => {
+        const heading = line.match(/^#{1,4}\s+(.+)$/)
+        if (heading) {
+          return <strong className="agent-section-title" key={`${line}-${index}`}>{renderInline(heading[1])}</strong>
+        }
+
+        const bullet = line.match(/^[-*]\s+(.+)$/)
+        if (bullet) {
+          return <span className="agent-bullet" key={`${line}-${index}`}>{renderInline(bullet[1])}</span>
+        }
+
+        return <p key={`${line}-${index}`}>{renderInline(line)}</p>
+      })}
+    </div>
+  )
+}
+
+function renderInline(value: string) {
+  return value.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={`${part}-${index}`}>{part.slice(2, -2)}</strong>
+    }
+    return part
+  })
+}

@@ -1,1 +1,23 @@
-.skeleton{position:relative;overflow:hidden;border-radius:9px;background:#0d2138}.skeleton:after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(105,146,200,.13),transparent);animation:shimmer 1.55s infinite}@keyframes shimmer{100%{transform:translateX(100%)}}.loading-shell{min-height:100vh;display:flex;color:#fff;background:#06101e}.loading-sidebar{position:fixed;inset:0 auto 0 0;width:212px;padding:25px 15px;display:flex;flex-direction:column;gap:11px;border-right:1px solid rgba(139,166,201,.13);background:#071321}.loading-brand{display:flex;align-items:center;gap:10px;margin-bottom:27px}.loading-brand>span{width:32px;height:32px;display:grid;place-items:center;border-radius:9px;background:#265fc5}.loading-brand svg{width:17px}.sk-brand{width:95px;height:13px}.sk-nav{height:42px}.loading-spacer{flex:1}.sk-system{height:66px}.loading-main{width:calc(100% - 212px);margin-left:212px;padding:25px}.loading-header{display:flex;justify-content:space-between;margin-bottom:23px}.sk-title{width:330px;height:31px}.sk-subtitle{width:250px;height:10px;margin-top:10px}.sk-refresh{width:90px;height:36px}.loading-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.sk-metric{height:108px}.loading-workspace{display:grid;grid-template-columns:1fr 390px;gap:14px;margin-top:14px}.loading-workspace>div{display:grid;gap:14px}.sk-chart{height:430px}.sk-table{height:205px}.sk-commander{height:720px}@media(max-width:1050px){.loading-workspace{grid-template-columns:1fr}.sk-commander{height:420px}}@media(max-width:820px){.loading-sidebar{display:none}.loading-main{width:100%;margin-left:0;padding:17px}.loading-metrics{grid-template-columns:1fr 1fr}}@media(max-width:520px){.loading-metrics{grid-template-columns:1fr}.sk-title{width:230px}.sk-refresh{width:38px}}
+.skeleton { position: relative; overflow: hidden; border-radius: 12px; background: #191916; }
+.skeleton::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, rgba(255, 120, 73, 0.08), transparent); animation: skeleton-shimmer 1.5s infinite; }
+@keyframes skeleton-shimmer { to { transform: translateX(100%); } }
+.loading-shell { min-height: 100vh; display: flex; color: #f4efe2; background: #0c0c0a; }
+.loading-sidebar { position: fixed; inset: 0 auto 0 0; width: 220px; display: flex; flex-direction: column; gap: 9px; padding: 24px 14px 18px; border-right: 1px solid rgba(244, 239, 226, 0.1); background: #0a0a09; }
+.loading-brand { display: flex; align-items: center; gap: 11px; margin: 0 4px 28px; }
+.loading-brand > span { width: 37px; height: 37px; display: grid; place-items: center; border-radius: 11px; color: #160d08; background: #ff7849; }
+.loading-brand svg { width: 18px; }
+.sk-brand { width: 105px; height: 14px; }
+.sk-nav { height: 44px; }
+.loading-spacer { flex: 1; }
+.sk-system { height: 66px; }
+.loading-main { width: calc(100% - 220px); margin-left: 220px; padding: 18px 22px; }
+.sk-header { height: 80px; margin-bottom: 14px; }
+.loading-metrics { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+.sk-metric { height: 116px; }
+.loading-command-grid { display: grid; grid-template-columns: minmax(270px, 0.9fr) minmax(390px, 1.3fr) minmax(285px, 0.92fr); gap: 12px; margin-top: 12px; }
+.sk-panel { height: 580px; border-radius: 18px; }
+.sk-operator::after { background: linear-gradient(90deg, transparent, rgba(183, 156, 255, 0.1), transparent); }
+@media (max-width: 1280px) { .loading-command-grid { grid-template-columns: 1fr 1.3fr; } .loading-command-grid .sk-panel:last-child { grid-column: 1 / -1; height: 330px; } }
+@media (max-width: 1020px) { .loading-metrics { grid-template-columns: repeat(3, 1fr); } .loading-command-grid { grid-template-columns: 1fr; } .loading-command-grid .sk-panel:last-child { grid-column: auto; } }
+@media (max-width: 760px) { .loading-sidebar { display: none; } .loading-main { width: 100%; margin-left: 0; padding: 12px; } .loading-metrics { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 520px) { .loading-metrics { grid-template-columns: 1fr; } }
