@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from backend.app.database.base import Base
-from backend.app.database.models.recovery import ApprovalRecord, AuditRecord, RecoveryProposal
+from backend.app.database.models.recovery import (
+    ApprovalRecord,
+    AuditRecord,
+    ImmutableApprovalRecordError,
+    RecoveryProposal,
+)
 from backend.app.schemas.audit import ApprovalDecisionType, AuditEventType
 from backend.app.schemas.recovery import (
     RecoveryActionCreate,
@@ -76,6 +81,7 @@ async def test_allowed_proposal_can_be_approved_once_without_execution(
         proposal_id=proposal.proposal_id,
         decision=ApprovalDecisionType.APPROVED,
         decided_by="merchant-owner",
+        reason="Approved for a bounded test recovery.",
         correlation_id=CORRELATION_ID,
     )
     replay = await service.decide(
@@ -84,6 +90,7 @@ async def test_allowed_proposal_can_be_approved_once_without_execution(
         proposal_id=proposal.proposal_id,
         decision=ApprovalDecisionType.APPROVED,
         decided_by="merchant-owner",
+        reason="Approved for a bounded test recovery.",
         correlation_id=CORRELATION_ID,
     )
 
@@ -96,6 +103,7 @@ async def test_allowed_proposal_can_be_approved_once_without_execution(
     assert stored is not None and stored.status == RecoveryPlanStatus.APPROVED
     assert decision.approval_id == replay.approval_id
     assert decision.plan_hash == proposal.content_hash
+    assert decision.reason == "Approved for a bounded test recovery."
     assert approval_count == 1
     assert {
         AuditEventType.PLAN_PROPOSED,
@@ -104,6 +112,44 @@ async def test_allowed_proposal_can_be_approved_once_without_execution(
         AuditEventType.PLAN_APPROVED,
     }.issubset(events)
     assert not hasattr(stored, "executed_at")
+
+
+@pytest.mark.asyncio
+async def test_approval_record_cannot_be_updated_or_deleted(session: AsyncSession) -> None:
+    settings = detector_settings()
+    incident = await seed_failure_spike(session, settings=settings)
+    service = RecoveryService(settings)
+    proposal = await service.create_proposal(
+        session,
+        merchant_id=MERCHANT_A,
+        incident_id=incident.id,
+        request=proposal_request(),
+        correlation_id=CORRELATION_ID,
+    )
+    decision = await service.decide(
+        session,
+        merchant_id=MERCHANT_A,
+        proposal_id=proposal.proposal_id,
+        decision=ApprovalDecisionType.REJECTED,
+        decided_by="merchant-owner",
+        reason="Merchant chose not to contact customers.",
+        correlation_id=CORRELATION_ID,
+    )
+    record = await session.get(ApprovalRecord, decision.approval_id)
+    assert record is not None
+    await session.commit()
+
+    record.reason = "Tampered reason"
+    with pytest.raises(ImmutableApprovalRecordError, match="append-only"):
+        await session.flush()
+    await session.rollback()
+
+    record = await session.get(ApprovalRecord, decision.approval_id)
+    assert record is not None
+    await session.delete(record)
+    with pytest.raises(ImmutableApprovalRecordError, match="append-only"):
+        await session.flush()
+    await session.rollback()
 
 
 @pytest.mark.asyncio
@@ -124,6 +170,7 @@ async def test_conflicting_second_decision_is_rejected(session: AsyncSession) ->
         proposal_id=proposal.proposal_id,
         decision=ApprovalDecisionType.APPROVED,
         decided_by="merchant-owner",
+        reason=None,
         correlation_id=CORRELATION_ID,
     )
 
@@ -134,6 +181,7 @@ async def test_conflicting_second_decision_is_rejected(session: AsyncSession) ->
             proposal_id=proposal.proposal_id,
             decision=ApprovalDecisionType.REJECTED,
             decided_by="merchant-owner",
+            reason="Conflicting replay must fail.",
             correlation_id=CORRELATION_ID,
         )
 
@@ -161,6 +209,7 @@ async def test_policy_rejected_proposal_cannot_be_approved(session: AsyncSession
             proposal_id=proposal.proposal_id,
             decision=ApprovalDecisionType.APPROVED,
             decided_by="merchant-owner",
+            reason=None,
             correlation_id=CORRELATION_ID,
         )
 
@@ -194,5 +243,6 @@ async def test_approval_rechecks_payment_is_still_unpaid(session: AsyncSession) 
             proposal_id=proposal.proposal_id,
             decision=ApprovalDecisionType.APPROVED,
             decided_by="merchant-owner",
+            reason=None,
             correlation_id=CORRELATION_ID,
         )

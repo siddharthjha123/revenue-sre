@@ -4,6 +4,7 @@ The language model may recommend actions, but it cannot authorize them. This
 deterministic layer is the boundary between reasoning and financial execution.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -25,7 +26,7 @@ class ProposalPolicyContext:
     incident_status: IncidentStatus
     incident_currency: str
     incident_money_at_risk_subunits: int
-    eligible_payment_ids: frozenset[str]
+    eligible_payment_amounts: Mapping[str, int]
     eligible_evidence_ids: frozenset[str]
     maximum_plan_amount_subunits: int
     maximum_actions: int
@@ -66,8 +67,14 @@ def evaluate_recovery_proposal(
         reasons.append("recovery plan lifetime exceeds the configured limit")
     if context.cooldown_active:
         reasons.append("incident proposal cooldown is active")
-    if any(action.payment_id not in context.eligible_payment_ids for action in plan.actions):
+    if any(action.payment_id not in context.eligible_payment_amounts for action in plan.actions):
         reasons.append("proposal includes an ineligible or already-paid payment")
+    if any(
+        action.payment_id in context.eligible_payment_amounts
+        and action.amount_subunits != context.eligible_payment_amounts[action.payment_id]
+        for action in plan.actions
+    ):
+        reasons.append("proposal amount does not match the current payment amount")
     if not plan.evidence_ids:
         reasons.append("proposal must reference incident evidence")
     elif any(str(item) not in context.eligible_evidence_ids for item in plan.evidence_ids):
@@ -82,9 +89,14 @@ def evaluate_recovery_proposal(
     }
     if any(action.action_type not in allowed_actions for action in plan.actions):
         reasons.append("proposal contains an action unavailable in this release")
-    action_keys = {(action.payment_id, action.action_type) for action in plan.actions}
-    if len(action_keys) != len(plan.actions):
-        reasons.append("proposal contains duplicate payment actions")
+    payment_ids = [action.payment_id for action in plan.actions]
+    if len(set(payment_ids)) != len(payment_ids):
+        reasons.append("proposal contains more than one action for a payment")
+    if plan.status not in {
+        RecoveryPlanStatus.DRAFT,
+        RecoveryPlanStatus.PENDING_APPROVAL,
+    }:
+        reasons.append("proposal is not awaiting merchant review")
     if not plan.approval_required:
         reasons.append("merchant approval is mandatory")
     return PolicyDecision(

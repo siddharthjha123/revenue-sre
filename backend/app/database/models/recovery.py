@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     Uuid,
+    event,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -58,6 +59,8 @@ class RecoveryProposal(Base):
     policy_reasons: Mapped[list[str]] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
     )
+    eligible_payment_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    omitted_payment_count: Mapped[int] = mapped_column(Integer, nullable=False)
     evidence_ids: Mapped[list[str]] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
     )
@@ -122,8 +125,23 @@ class ApprovalRecord(Base):
         nullable=False,
     )
     decided_by: Mapped[str] = mapped_column(String(256), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(1000))
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     plan_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class ImmutableApprovalRecordError(RuntimeError):
+    """Raised when application code attempts to mutate merchant authority."""
+
+
+@event.listens_for(ApprovalRecord, "before_update")
+def _reject_approval_update(*_) -> None:
+    raise ImmutableApprovalRecordError("Approval records are append-only")
+
+
+@event.listens_for(ApprovalRecord, "before_delete")
+def _reject_approval_delete(*_) -> None:
+    raise ImmutableApprovalRecordError("Approval records are append-only")
 
 
 class AuditRecord(Base):

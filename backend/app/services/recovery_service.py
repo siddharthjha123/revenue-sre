@@ -63,6 +63,7 @@ class RecoveryService:
         incident_id: UUID,
         request: RecoveryProposalCreate,
         correlation_id: UUID,
+        generation_metadata: dict[str, int] | None = None,
     ) -> RecoveryProposalResponse:
         incident = await IncidentRepository(session).get(merchant_id, incident_id)
         if incident is None:
@@ -76,7 +77,7 @@ class RecoveryService:
                 incident_id,
                 since=now - timedelta(minutes=self._settings.recovery_proposal_cooldown_minutes),
             )
-        eligible_ids = await self._eligible_payment_ids(session, incident)
+        eligible_payments = await self._eligible_payments(session, incident)
         eligible_evidence_ids = await self._eligible_evidence_ids(session, incident)
         evidence_ids = request.evidence_ids or [UUID(value) for value in eligible_evidence_ids]
         proposal_id = uuid4()
@@ -107,7 +108,7 @@ class RecoveryService:
             plan,
             self._policy_context(
                 incident,
-                eligible_ids=eligible_ids,
+                eligible_payments=eligible_payments,
                 eligible_evidence_ids=eligible_evidence_ids,
                 cooldown_active=cooldown_active,
             ),
@@ -132,6 +133,8 @@ class RecoveryService:
             policy_version=decision.policy_version,
             policy_allowed=decision.allowed,
             policy_reasons=list(decision.reasons),
+            eligible_payment_count=len(eligible_payments),
+            omitted_payment_count=max(0, len(eligible_payments) - len(actions)),
             evidence_ids=[str(value) for value in evidence_ids],
             created_by=request.created_by,
         )
@@ -161,6 +164,7 @@ class RecoveryService:
                     "plan_hash": content_hash,
                     "total_amount_subunits": total,
                     "evidence_ids": [str(value) for value in evidence_ids],
+                    **(generation_metadata or {}),
                 },
             )
         )
@@ -199,6 +203,7 @@ class RecoveryService:
         proposal_id: UUID,
         decision: ApprovalDecisionType,
         decided_by: str,
+        reason: str | None,
         correlation_id: UUID,
     ) -> ProposalDecisionResponse:
         repository = RecoveryRepository(session)
@@ -219,13 +224,13 @@ class RecoveryService:
         if decision == ApprovalDecisionType.APPROVED:
             if proposal.status != RecoveryPlanStatus.PENDING_APPROVAL:
                 raise RecoveryConflictError("Proposal is not awaiting approval")
-            eligible_ids = await self._eligible_payment_ids(session, incident)
+            eligible_payments = await self._eligible_payments(session, incident)
             eligible_evidence_ids = await self._eligible_evidence_ids(session, incident)
             policy = evaluate_recovery_proposal(
                 self._stored_plan(proposal, actions),
                 self._policy_context(
                     incident,
-                    eligible_ids=eligible_ids,
+                    eligible_payments=eligible_payments,
                     eligible_evidence_ids=eligible_evidence_ids,
                     cooldown_active=False,
                 ),
@@ -248,6 +253,7 @@ class RecoveryService:
             proposal=proposal,
             decision=decision,
             decided_by=decided_by,
+            reason=reason,
             decided_at=decided_at,
         )
         await repository.add_audit(
@@ -259,7 +265,10 @@ class RecoveryService:
                 event_type=event_type,
                 actor_type=AuditActorType.MERCHANT,
                 actor_id=decided_by,
-                details={"plan_hash": proposal.content_hash},
+                details={
+                    "plan_hash": proposal.content_hash,
+                    "reason": reason,
+                },
             )
         )
         await session.flush()
@@ -281,9 +290,7 @@ class RecoveryService:
         actions = list(await repository.list_actions(proposal_id))
         return self._proposal_response(proposal, actions)
 
-    async def _eligible_payment_ids(
-        self, session: AsyncSession, incident: Incident
-    ) -> frozenset[str]:
+    async def _eligible_payments(self, session: AsyncSession, incident: Incident) -> dict[str, int]:
         evidence_payment_ids = set(
             (
                 await session.scalars(
@@ -307,9 +314,11 @@ class RecoveryService:
                 )
             )
         ).all()
-        return frozenset(
-            payment.payment_id for payment in current if payment.status == PaymentStatus.FAILED
-        )
+        return {
+            payment.payment_id: payment.amount_subunits
+            for payment in current
+            if payment.status == PaymentStatus.FAILED and payment.currency == incident.currency
+        }
 
     @staticmethod
     async def _eligible_evidence_ids(
@@ -328,7 +337,7 @@ class RecoveryService:
         self,
         incident: Incident,
         *,
-        eligible_ids: frozenset[str],
+        eligible_payments: dict[str, int],
         eligible_evidence_ids: frozenset[str],
         cooldown_active: bool,
     ) -> ProposalPolicyContext:
@@ -336,7 +345,7 @@ class RecoveryService:
             incident_status=incident.status,
             incident_currency=incident.currency,
             incident_money_at_risk_subunits=incident.revenue_at_risk_subunits,
-            eligible_payment_ids=eligible_ids,
+            eligible_payment_amounts=eligible_payments,
             eligible_evidence_ids=eligible_evidence_ids,
             maximum_plan_amount_subunits=self._settings.recovery_max_plan_amount_subunits,
             maximum_actions=self._settings.recovery_max_actions_per_plan,
@@ -403,8 +412,20 @@ class RecoveryService:
             policy_allowed=proposal.policy_allowed,
             policy_reasons=proposal.policy_reasons,
             policy_version=proposal.policy_version,
+            eligible_payment_count=proposal.eligible_payment_count,
+            omitted_payment_count=proposal.omitted_payment_count,
             created_by=proposal.created_by,
             created_at=_as_utc(proposal.created_at),
+            action_count=len(actions),
+            maximum_recoverable_amount_subunits=proposal.total_amount_subunits,
+            stopping_conditions=[
+                "merchant_approval_required",
+                "proposal_must_not_be_expired",
+                "payment_must_still_be_failed",
+                f"maximum_actions:{len(actions)}",
+                f"maximum_amount_subunits:{proposal.total_amount_subunits}",
+                f"maximum_customer_contacts:{proposal.maximum_customer_contacts}",
+            ],
         )
 
     @staticmethod
@@ -415,6 +436,7 @@ class RecoveryService:
             incident_id=record.incident_id,
             decision=record.decision.value,
             decided_by=record.decided_by,
+            reason=record.reason,
             decided_at=_as_utc(record.decided_at),
             plan_hash=record.plan_hash,
         )
