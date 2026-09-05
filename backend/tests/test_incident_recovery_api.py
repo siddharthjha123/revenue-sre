@@ -104,6 +104,22 @@ async def test_incident_proposal_approval_and_audit_endpoints(api_context) -> No
     event_types = {item["event_type"] for item in audit_response.json()}
     assert {"incident_created", "plan_proposed", "plan_approved"}.issubset(event_types)
 
+    merchant_audit = await client.get("/audit?limit=500", headers=headers)
+    assert merchant_audit.status_code == 200
+    merchant_events = merchant_audit.json()
+    assert any(
+        item["event_type"] == "plan_approved"
+        and item["plan_id"] == proposal["proposal_id"]
+        and item["actor_id"] == "merchant-owner"
+        for item in merchant_events
+    )
+
+    other_merchant_audit = await client.get(
+        "/audit?limit=500",
+        headers={"X-Merchant-Id": str(MERCHANT_B)},
+    )
+    assert other_merchant_audit.status_code == 403
+
 
 @pytest.mark.asyncio
 async def test_incident_endpoint_rejects_another_merchant(api_context) -> None:

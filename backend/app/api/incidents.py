@@ -44,6 +44,18 @@ from .dependencies import require_merchant
 router = APIRouter(tags=["incidents"])
 
 
+@router.get("/audit", response_model=list[AuditEvent])
+async def get_merchant_audit(
+    merchant_id: Annotated[UUID, Depends(require_merchant)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 500,
+) -> list[AuditEvent]:
+    """Return the merchant's append-only control history across incidents."""
+
+    records = await RecoveryRepository(session).list_audit(merchant_id, limit=limit)
+    return [_audit_response(record) for record in records]
+
+
 @router.get("/incidents", response_model=list[DetectedIncidentResponse])
 async def list_incidents(
     merchant_id: Annotated[UUID, Depends(require_merchant)],
@@ -279,21 +291,7 @@ async def get_incident_audit(
     if await IncidentRepository(session).get(merchant_id, incident_id) is None:
         raise HTTPException(status_code=404, detail="Incident was not found")
     records = await RecoveryRepository(session).list_audit(merchant_id, incident_id=incident_id)
-    return [
-        AuditEvent(
-            audit_id=record.id,
-            merchant_id=record.merchant_id,
-            correlation_id=record.correlation_id,
-            incident_id=record.incident_id,
-            plan_id=record.proposal_id,
-            event_type=record.event_type,
-            actor_type=record.actor_type,
-            actor_id=record.actor_id,
-            occurred_at=_as_utc(record.occurred_at),
-            details=record.details,
-        )
-        for record in records
-    ]
+    return [_audit_response(record) for record in records]
 
 
 async def _decide(
@@ -359,6 +357,21 @@ def _incident_response(incident: Incident, evidence) -> DetectedIncidentResponse
             )
             for item in evidence
         ],
+    )
+
+
+def _audit_response(record) -> AuditEvent:
+    return AuditEvent(
+        audit_id=record.id,
+        merchant_id=record.merchant_id,
+        correlation_id=record.correlation_id,
+        incident_id=record.incident_id,
+        plan_id=record.proposal_id,
+        event_type=record.event_type,
+        actor_type=record.actor_type,
+        actor_id=record.actor_id,
+        occurred_at=_as_utc(record.occurred_at),
+        details=record.details,
     )
 
 
