@@ -31,6 +31,17 @@ PAYMENT_FIELD_ALLOWLIST = frozenset(
     }
 )
 SUPPORTED_EVENT_VALUES = frozenset(event.value for event in SupportedWebhookEvent)
+PAYMENT_LINK_FIELD_ALLOWLIST = frozenset(
+    {"id", "entity", "amount", "amount_paid", "currency", "status", "reference_id"}
+)
+RECOVERY_NOTE_ALLOWLIST = frozenset(
+    {
+        "revenue_sre_proposal_id",
+        "revenue_sre_action_id",
+        "revenue_sre_incident_id",
+        "original_payment_id",
+    }
+)
 
 
 def sanitize_webhook_payload(envelope: RazorpayWebhookEnvelope) -> dict[str, Any]:
@@ -63,5 +74,26 @@ def sanitize_webhook_payload(envelope: RazorpayWebhookEnvelope) -> dict[str, Any
     sanitized_payment = {
         key: value for key, value in payment_entity.items() if key in PAYMENT_FIELD_ALLOWLIST
     }
-    sanitized["payload"] = {"payment": {"entity": sanitized_payment}}
+    sanitized_payload: dict[str, Any] = {"payment": {"entity": sanitized_payment}}
+    if envelope.event == SupportedWebhookEvent.PAYMENT_LINK_PAID:
+        payment_link_wrapper = envelope.payload.get("payment_link")
+        if not isinstance(payment_link_wrapper, dict):
+            raise InvalidWebhookPayloadError("Payment Link event is missing payment_link payload")
+        payment_link_entity = payment_link_wrapper.get("entity")
+        if not isinstance(payment_link_entity, dict):
+            raise InvalidWebhookPayloadError("Payment Link event is missing payment_link entity")
+        sanitized_link = {
+            key: value
+            for key, value in payment_link_entity.items()
+            if key in PAYMENT_LINK_FIELD_ALLOWLIST
+        }
+        notes = payment_link_entity.get("notes")
+        if isinstance(notes, dict):
+            sanitized_link["notes"] = {
+                key: value
+                for key, value in notes.items()
+                if key in RECOVERY_NOTE_ALLOWLIST and isinstance(value, str)
+            }
+        sanitized_payload["payment_link"] = {"entity": sanitized_link}
+    sanitized["payload"] = sanitized_payload
     return sanitized

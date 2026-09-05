@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...schemas.audit import ApprovalDecisionType
@@ -55,6 +55,28 @@ class RecoveryRepository:
             .order_by(RecoveryProposalAction.id)
         )
         return result.all()
+
+    async def get_action_for_payment_link(
+        self,
+        merchant_id: UUID,
+        *,
+        action_id: UUID,
+        payment_link_id: str,
+        reference_id: str,
+    ) -> RecoveryProposalAction | None:
+        return await self._session.scalar(
+            select(RecoveryProposalAction)
+            .join(RecoveryProposal, RecoveryProposal.id == RecoveryProposalAction.proposal_id)
+            .where(
+                RecoveryProposal.merchant_id == merchant_id,
+                RecoveryProposalAction.id == action_id,
+                or_(
+                    RecoveryProposalAction.provider_payment_link_id == payment_link_id,
+                    RecoveryProposalAction.execution_reference_id == reference_id,
+                ),
+            )
+            .with_for_update()
+        )
 
     async def has_recent_proposal(
         self,

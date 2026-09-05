@@ -15,13 +15,19 @@ from backend.app.database.models.recovery import (
     AuditRecord,
     ImmutableApprovalRecordError,
     RecoveryProposal,
+    RecoveryProposalAction,
 )
+from backend.app.database.models.webhook_event import WebhookEvent
 from backend.app.schemas.audit import ApprovalDecisionType, AuditEventType
+from backend.app.schemas.incident import IncidentStatus
 from backend.app.schemas.recovery import (
     RecoveryActionCreate,
+    RecoveryExecutionStatus,
     RecoveryPlanStatus,
     RecoveryProposalCreate,
 )
+from backend.app.services.razorpay_mcp_adapter import PaymentLinkResult
+from backend.app.services.recovery_outcome_service import RecoveryOutcomeService
 from backend.app.services.recovery_service import (
     RecoveryConflictError,
     RecoveryPolicyRejectedError,
@@ -246,3 +252,124 @@ async def test_approval_rechecks_payment_is_still_unpaid(session: AsyncSession) 
             reason=None,
             correlation_id=CORRELATION_ID,
         )
+
+
+class FakePaymentLinkAdapter:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def create_payment_link(self, arguments: dict) -> PaymentLinkResult:
+        self.calls.append(arguments)
+        return PaymentLinkResult(
+            payment_link_id="plink_test_recovery",
+            short_url="https://rzp.io/i/test-recovery",
+            reference_id=arguments["reference_id"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_approved_proposal_executes_only_restricted_payment_link_payload(
+    session: AsyncSession,
+) -> None:
+    settings = detector_settings(execution_enabled=True)
+    incident = await seed_failure_spike(session, settings=settings)
+    service = RecoveryService(settings)
+    proposal = await service.create_proposal(
+        session,
+        merchant_id=MERCHANT_A,
+        incident_id=incident.id,
+        request=proposal_request(),
+        correlation_id=CORRELATION_ID,
+    )
+    await service.decide(
+        session,
+        merchant_id=MERCHANT_A,
+        proposal_id=proposal.proposal_id,
+        decision=ApprovalDecisionType.APPROVED,
+        decided_by="merchant-owner",
+        reason="Execute the reviewed test-mode plan.",
+        correlation_id=CORRELATION_ID,
+    )
+    adapter = FakePaymentLinkAdapter()
+
+    result = await service.execute_proposal(
+        session,
+        merchant_id=MERCHANT_A,
+        proposal_id=proposal.proposal_id,
+        executed_by="merchant-owner",
+        correlation_id=CORRELATION_ID,
+        adapter=adapter,
+    )
+
+    assert result.status == RecoveryPlanStatus.COMPLETED
+    assert result.executed_count == 1
+    assert result.execution_performed is True
+    assert len(adapter.calls) == 1
+    payload = adapter.calls[0]
+    assert payload["amount"] == 10_000
+    assert payload["currency"] == "INR"
+    assert payload["accept_partial"] is False
+    assert payload["notify_sms"] is False
+    assert payload["notify_email"] is False
+    assert "customer_name" not in payload
+    assert "customer_email" not in payload
+    assert "customer_contact" not in payload
+    assert len(payload["reference_id"]) <= 40
+    action = await session.scalar(
+        select(RecoveryProposalAction).where(
+            RecoveryProposalAction.proposal_id == proposal.proposal_id
+        )
+    )
+    assert action is not None
+    assert action.execution_status == RecoveryExecutionStatus.SUCCEEDED
+    assert action.provider_payment_link_id == "plink_test_recovery"
+    events = (await session.scalars(select(AuditRecord.event_type))).all()
+    assert AuditEventType.ACTION_EXECUTED in events
+
+    replay = await service.execute_proposal(
+        session,
+        merchant_id=MERCHANT_A,
+        proposal_id=proposal.proposal_id,
+        executed_by="merchant-owner",
+        correlation_id=CORRELATION_ID,
+        adapter=adapter,
+    )
+    assert replay.executed_count == 1
+    assert len(adapter.calls) == 1
+
+    session.add(
+        event := WebhookEvent(
+            correlation_id=CORRELATION_ID,
+            merchant_id=MERCHANT_A,
+            razorpay_event_id="event_payment_link_paid_test",
+            razorpay_account_id="acc_TEST001",
+            event_type="payment_link.paid",
+            provider_event_at=datetime.now(UTC),
+            payload_hash="f" * 64,
+            payload={
+                "payload": {
+                    "payment": {"entity": {"id": "pay_recovered_test"}},
+                    "payment_link": {
+                        "entity": {
+                            "id": "plink_test_recovery",
+                            "reference_id": payload["reference_id"],
+                            "status": "paid",
+                            "currency": "INR",
+                            "amount_paid": 10_000,
+                            "notes": payload["notes"],
+                        }
+                    },
+                }
+            },
+        )
+    )
+    await session.flush()
+    await RecoveryOutcomeService().record_payment_link_paid(event, session)
+    await session.refresh(action)
+    await session.refresh(incident)
+    assert action.recovered_payment_id == "pay_recovered_test"
+    assert action.recovered_amount_subunits == 10_000
+    assert action.recovered_at is not None
+    assert incident.status == IncidentStatus.RESOLVED
+    events = (await session.scalars(select(AuditRecord.event_type))).all()
+    assert AuditEventType.OUTCOME_VERIFIED in events

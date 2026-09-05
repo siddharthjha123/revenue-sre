@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI
 
+from .api.dashboard import router as dashboard_router
 from .api.health import router as health_router
 from .api.incidents import router as incident_router
 from .api.metrics import router as metrics_router
@@ -23,6 +24,7 @@ def create_app() -> FastAPI:
     )
     application.add_middleware(CorrelationIdMiddleware)
     application.include_router(health_router)
+    application.include_router(dashboard_router)
     application.include_router(incident_router)
     application.include_router(metrics_router)
     application.include_router(razorpay_webhook_router)

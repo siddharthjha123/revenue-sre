@@ -12,6 +12,11 @@ from ..database.base import get_db_session
 from ..database.models.incident import Incident
 from ..database.repositories.incident_repository import IncidentRepository
 from ..database.repositories.recovery_repository import RecoveryRepository
+from ..mcp.recovery_tools import (
+    EvidenceVerificationError,
+    NoRecoverablePaymentsError,
+    RecoveryAgentTools,
+)
 from ..observability.context import get_correlation_id
 from ..schemas.audit import ApprovalDecisionType, AuditEvent
 from ..schemas.incident import (
@@ -21,14 +26,18 @@ from ..schemas.incident import (
     IncidentEvidenceResponse,
 )
 from ..schemas.recovery import (
+    BoundedRecoveryProposalRequest,
     ProposalDecisionRequest,
     ProposalDecisionResponse,
+    ProposalExecutionRequest,
+    ProposalExecutionResponse,
     RecoveryProposalCreate,
     RecoveryProposalResponse,
 )
 from ..services.incident_commander import answer_incident_question
 from ..services.recovery_service import (
     RecoveryConflictError,
+    RecoveryExecutionDisabledError,
     RecoveryNotFoundError,
     RecoveryPolicyRejectedError,
     RecoveryService,
@@ -36,6 +45,18 @@ from ..services.recovery_service import (
 from .dependencies import require_merchant
 
 router = APIRouter(tags=["incidents"])
+
+
+@router.get("/audit", response_model=list[AuditEvent])
+async def get_merchant_audit(
+    merchant_id: Annotated[UUID, Depends(require_merchant)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 500,
+) -> list[AuditEvent]:
+    """Return the merchant's append-only control history across incidents."""
+
+    records = await RecoveryRepository(session).list_audit(merchant_id, limit=limit)
+    return [_audit_response(record) for record in records]
 
 
 @router.get("/incidents", response_model=list[DetectedIncidentResponse])
@@ -119,6 +140,45 @@ async def create_recovery_proposal(
             )
     except RecoveryNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post(
+    "/incidents/{incident_id}/bounded-proposal",
+    response_model=RecoveryProposalResponse,
+)
+async def create_bounded_recovery_proposal(
+    incident_id: UUID,
+    request: BoundedRecoveryProposalRequest,
+    merchant_id: Annotated[UUID, Depends(require_merchant)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> RecoveryProposalResponse:
+    """Run the MCP proposal derivation behind a narrow merchant command.
+
+    The request supplies no payment IDs, amounts, evidence IDs, or policy limits.
+    Those values are derived from verified incident evidence by the same service
+    used by ``create_bounded_recovery_proposal`` in the Revenue SRE MCP. This
+    endpoint persists a review record only and never executes Razorpay.
+    """
+
+    if await IncidentRepository(session).get(merchant_id, incident_id) is None:
+        raise HTTPException(status_code=404, detail="Incident was not found")
+
+    try:
+        proposal = await RecoveryAgentTools(settings=settings).create_bounded_proposal(
+            incident_id=incident_id,
+            action_type=request.action_type,
+            rationale=request.rationale,
+            expires_in_minutes=request.expires_in_minutes,
+        )
+    except (EvidenceVerificationError, NoRecoverablePaymentsError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except RecoveryNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    if proposal.merchant_id != merchant_id:
+        raise HTTPException(status_code=404, detail="Incident was not found")
+    return proposal
 
 
 @router.get(
@@ -223,6 +283,36 @@ async def reject_recovery_proposal(
     )
 
 
+@router.post(
+    "/proposals/{proposal_id}/execute",
+    response_model=ProposalExecutionResponse,
+)
+async def execute_recovery_proposal(
+    proposal_id: UUID,
+    request: ProposalExecutionRequest,
+    merchant_id: Annotated[UUID, Depends(require_merchant)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ProposalExecutionResponse:
+    """Execute an approved exact plan through the restricted Razorpay MCP adapter."""
+
+    try:
+        async with session.begin():
+            return await RecoveryService(settings).execute_proposal(
+                session,
+                merchant_id=merchant_id,
+                proposal_id=proposal_id,
+                executed_by=request.executed_by,
+                correlation_id=get_correlation_id(),
+            )
+    except RecoveryNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RecoveryExecutionDisabledError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except RecoveryConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
 @router.get("/incidents/{incident_id}/audit", response_model=list[AuditEvent])
 async def get_incident_audit(
     incident_id: UUID,
@@ -234,21 +324,7 @@ async def get_incident_audit(
     if await IncidentRepository(session).get(merchant_id, incident_id) is None:
         raise HTTPException(status_code=404, detail="Incident was not found")
     records = await RecoveryRepository(session).list_audit(merchant_id, incident_id=incident_id)
-    return [
-        AuditEvent(
-            audit_id=record.id,
-            merchant_id=record.merchant_id,
-            correlation_id=record.correlation_id,
-            incident_id=record.incident_id,
-            plan_id=record.proposal_id,
-            event_type=record.event_type,
-            actor_type=record.actor_type,
-            actor_id=record.actor_id,
-            occurred_at=_as_utc(record.occurred_at),
-            details=record.details,
-        )
-        for record in records
-    ]
+    return [_audit_response(record) for record in records]
 
 
 async def _decide(
@@ -314,6 +390,21 @@ def _incident_response(incident: Incident, evidence) -> DetectedIncidentResponse
             )
             for item in evidence
         ],
+    )
+
+
+def _audit_response(record) -> AuditEvent:
+    return AuditEvent(
+        audit_id=record.id,
+        merchant_id=record.merchant_id,
+        correlation_id=record.correlation_id,
+        incident_id=record.incident_id,
+        plan_id=record.proposal_id,
+        event_type=record.event_type,
+        actor_type=record.actor_type,
+        actor_id=record.actor_id,
+        occurred_at=_as_utc(record.occurred_at),
+        details=record.details,
     )
 
 

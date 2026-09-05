@@ -22,6 +22,7 @@ EVENT_STATUS = {
     SupportedWebhookEvent.PAYMENT_FAILED.value: PaymentStatus.FAILED,
     SupportedWebhookEvent.PAYMENT_AUTHORIZED.value: PaymentStatus.AUTHORIZED,
     SupportedWebhookEvent.PAYMENT_CAPTURED.value: PaymentStatus.CAPTURED,
+    SupportedWebhookEvent.PAYMENT_LINK_PAID.value: PaymentStatus.CAPTURED,
 }
 VALID_FORWARD_TRANSITIONS = {
     (PaymentStatus.CREATED, PaymentStatus.FAILED),

@@ -28,6 +28,13 @@ class RecoveryPlanStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class RecoveryExecutionStatus(StrEnum):
+    NOT_STARTED = "not_started"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
 class RecoveryCandidate(BaseModel):
     """Safety evaluation for one failed payment."""
 
@@ -139,10 +146,30 @@ class RecoveryProposalCreate(BaseModel):
     created_by: str = Field(min_length=1, max_length=256)
 
 
+class BoundedRecoveryProposalRequest(BaseModel):
+    """Minimal command whose financial scope is derived entirely by the backend."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    action_type: RecoveryActionType = RecoveryActionType.CREATE_PAYMENT_LINK
+    rationale: str = Field(min_length=1, max_length=1000)
+    expires_in_minutes: int = Field(default=30, ge=1, le=1440)
+
+
 class RecoveryActionResponse(RecoveryAction):
     """Persisted proposal action."""
 
     model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    execution_status: RecoveryExecutionStatus = RecoveryExecutionStatus.NOT_STARTED
+    provider_payment_link_id: str | None = None
+    payment_link_url: str | None = None
+    execution_reference_id: str | None = None
+    executed_at: AwareDatetime | None = None
+    execution_error_code: str | None = None
+    recovered_payment_id: str | None = None
+    recovered_amount_subunits: int | None = Field(default=None, ge=0)
+    recovered_at: AwareDatetime | None = None
 
 
 class RecoveryProposalResponse(BaseModel):
@@ -197,3 +224,25 @@ class ProposalDecisionResponse(BaseModel):
     reason: str | None = None
     decided_at: AwareDatetime
     plan_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class ProposalExecutionRequest(BaseModel):
+    """Explicit merchant command to execute an already approved proposal."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    executed_by: str = Field(min_length=1, max_length=256)
+
+
+class ProposalExecutionResponse(BaseModel):
+    """Result of the restricted Razorpay Payment Link execution adapter."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    proposal_id: UUID
+    incident_id: UUID
+    status: RecoveryPlanStatus
+    actions: list[RecoveryActionResponse]
+    executed_count: int = Field(ge=0)
+    failed_count: int = Field(ge=0)
+    execution_performed: bool

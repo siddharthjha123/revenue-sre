@@ -12,6 +12,7 @@ class SupportedWebhookEvent(StrEnum):
     PAYMENT_FAILED = "payment.failed"
     PAYMENT_AUTHORIZED = "payment.authorized"
     PAYMENT_CAPTURED = "payment.captured"
+    PAYMENT_LINK_PAID = "payment_link.paid"
 
 
 class RazorpayWebhookEnvelope(BaseModel):
