@@ -13,6 +13,10 @@ import { AnimatePresence, motion } from 'motion/react'
 import type { Incident } from '../../lib/api'
 import { evidenceIsVerified, incidentLabel } from '../../lib/incidents'
 import { getExecutiveBriefing, streamIncidentTurn } from '../../lib/trueforge'
+import {
+  isRecoveryProposalRequest,
+  type RecoveryWorkflowStage,
+} from '../../lib/recoveryWorkflow'
 import { RobotAvatar } from '../ui/RobotAvatar'
 
 type ChatMessage = {
@@ -27,9 +31,15 @@ interface RevenueOperatorProps {
   activeIncident: Incident | null
   incidents: Incident[]
   onAttachIncident: (incidentId: string) => void
+  onRecoveryStage: (stage: RecoveryWorkflowStage, error?: string) => void
 }
 
-export function RevenueOperator({ activeIncident, incidents, onAttachIncident }: RevenueOperatorProps) {
+export function RevenueOperator({
+  activeIncident,
+  incidents,
+  onAttachIncident,
+  onRecoveryStage,
+}: RevenueOperatorProps) {
   const queryClient = useQueryClient()
   const [input, setInput] = useState('')
   const briefing = useMemo(
@@ -68,27 +78,44 @@ export function RevenueOperator({ activeIncident, incidents, onAttachIncident }:
   }, [activity, messages])
 
   const chat = useMutation({
-    mutationFn: async ({ message, responseId }: { message: string; responseId: number }) => {
+    mutationFn: async ({
+      message,
+      responseId,
+      proposalRequested,
+    }: {
+      message: string
+      responseId: number
+      proposalRequested: boolean
+    }) => {
       if (!activeIncident) throw new Error('Attach an incident before asking a question.')
       return streamIncidentTurn(activeIncident, message, {
         onDelta: (content) => setMessages((current) => current.map((item) =>
           item.id === responseId ? { ...item, content, streaming: true } : item,
         )),
         onStatus: setActivity,
+        onRecoveryStage: proposalRequested ? (stage) => onRecoveryStage(stage) : undefined,
       })
     },
-    onSuccess: (result, { responseId }) => {
+    onSuccess: (result, { responseId, proposalRequested }) => {
       setMessages((current) => current.map((item) =>
         item.id === responseId ? { ...item, content: result.content, streaming: false } : item,
       ))
       setActivity(result.toolsCompleted ? 'Investigation complete · evidence connected' : 'Response complete')
+      if (proposalRequested) {
+        onRecoveryStage(
+          result.proposalCreated ? 'persisting' : 'failed',
+          result.proposalCreated
+            ? undefined
+            : 'The agent completed without creating a bounded proposal.',
+        )
+      }
       if (activeIncident) {
         void queryClient.invalidateQueries({ queryKey: ['incident-proposal', activeIncident.incident_id] })
         void queryClient.invalidateQueries({ queryKey: ['incident-audit', activeIncident.incident_id] })
         void queryClient.invalidateQueries({ queryKey: ['dashboard-summary'] })
       }
     },
-    onError: (error, { responseId }) => {
+    onError: (error, { responseId, proposalRequested }) => {
       setMessages((current) => current.map((item) => item.id === responseId
         ? {
             ...item,
@@ -98,6 +125,7 @@ export function RevenueOperator({ activeIncident, incidents, onAttachIncident }:
         : item,
       ))
       setActivity('Agent connection needs attention')
+      if (proposalRequested) onRecoveryStage('failed', error.message)
     },
   })
 
@@ -106,6 +134,8 @@ export function RevenueOperator({ activeIncident, incidents, onAttachIncident }:
     if (!message || chat.isPending || briefingStreaming || !activeIncident) return
     const userId = messageSequence.current++
     const responseId = messageSequence.current++
+    const proposalRequested = isRecoveryProposalRequest(message)
+    if (proposalRequested) onRecoveryStage('requested')
     setMessages((current) => [
       ...current,
       { id: userId, role: 'user', content: message },
@@ -119,7 +149,7 @@ export function RevenueOperator({ activeIncident, incidents, onAttachIncident }:
     ])
     setInput('')
     setActivity('Opening TrueForge agent session')
-    chat.mutate({ message, responseId })
+    chat.mutate({ message, responseId, proposalRequested })
   }
 
   const submit = (event: FormEvent) => {
@@ -144,7 +174,10 @@ export function RevenueOperator({ activeIncident, incidents, onAttachIncident }:
     ['Summarize incident', 'Give me a concise summary of this incident.'],
     ['Explain evidence', 'Explain the evidence and what is confirmed.'],
     ['Safest next step', 'What is the safest next step?'],
-    ['Plan recovery', 'Describe a bounded recovery proposal for this incident.'],
+    [
+      'Plan recovery',
+      'Prepare one bounded recovery proposal for this incident using verified evidence and deterministic policy limits. Keep it pending merchant approval and do not execute any Razorpay action.',
+    ],
   ] as const
 
   return (
@@ -241,7 +274,7 @@ function AgentMessageBody({ content }: { content: string }) {
 
         const bullet = line.match(/^[-*]\s+(.+)$/)
         if (bullet) {
-          return <span className="agent-bullet" key={`${line}-${index}`}>{renderInline(bullet[1])}</span>
+          return <span className="agent-bullet" key={`${line}-${index}`}><span>{renderInline(bullet[1])}</span></span>
         }
 
         return <p key={`${line}-${index}`}>{renderInline(line)}</p>
