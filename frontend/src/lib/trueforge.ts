@@ -33,16 +33,25 @@ interface InternalAgentTurnResult extends AgentTurnResult {
   proposalApprovals: Array<{ toolCallId: string; threadId: string }>
 }
 
-export function getExecutiveBriefing(incident: Incident | null, incidentCount: number) {
+export function getExecutiveBriefing(incident: Incident | null, incidents: Incident[]) {
+  const incidentCount = incidents.length
   if (!incident) {
     return 'Sir, there are no open payment incidents. Monitoring is active, and I will bring the highest-risk incident into focus when one opens.'
   }
 
   const incidentWord = incidentCount === 1 ? 'incident' : 'incidents'
   const verb = incidentCount === 1 ? 'is' : 'are'
+  const highestRiskIncident = incidents.reduce<Incident | null>(
+    (highest, candidate) => !highest || candidate.revenue_at_risk_subunits > highest.revenue_at_risk_subunits
+      ? candidate
+      : highest,
+    null,
+  ) ?? incident
+  const focus = highestRiskIncident.incident_id === incident.incident_id
+    ? `The highest-risk incident is ${incidentLabel(incident)}`
+    : `You are viewing ${incidentLabel(incident)}; the highest-risk incident remains ${incidentLabel(highestRiskIncident)}`
   return (
-    `Sir, there ${verb} ${incidentCount} open ${incidentWord}. Critical incident number 1 is ` +
-    `${incidentLabel(incident)}: ${incident.current_failure_count} of ` +
+    `Sir, there ${verb} ${incidentCount} open ${incidentWord}. ${focus}: ${incident.current_failure_count} of ` +
     `${incident.current_attempt_count} attempts failed ` +
     `(${formatPercent(incident.current_failure_rate)}), with ` +
     `${formatMoney(incident.revenue_at_risk_subunits, incident.currency)} at risk. ` +
@@ -296,7 +305,8 @@ Current failure rate: ${incident.current_failure_rate}
 Baseline attempts: ${incident.baseline_attempt_count}
 Baseline failures: ${incident.baseline_failure_count}
 Baseline failure rate: ${incident.baseline_failure_rate}
-Revenue at risk: ${incident.revenue_at_risk_subunits} ${incident.currency} subunits
+Total revenue at risk across all failed payments: ${formatMoney(incident.revenue_at_risk_subunits, incident.currency)} (${incident.revenue_at_risk_subunits} ${incident.currency} subunits total)
+Average amount per failed payment: ${formatMoney(Math.round(incident.revenue_at_risk_subunits / Math.max(incident.current_failure_count, 1)), incident.currency)}
 Dashboard evidence state: ${verification}
 Persisted proposal: ${proposal
     ? `${proposal.proposal_id}; status=${proposal.status}; execution_performed=${proposal.execution_performed}`
@@ -307,10 +317,11 @@ Merchant request: ${merchantMessage}
 Respond in professional English for a busy merchant. Use no more than 90 words unless
 the merchant explicitly asks for detail. Lead with the answer, then use at most four
 short bullets. Do not reveal private reasoning, deferred-tool discovery, schemas, raw
-payloads, or internal implementation details. State exact comparisons (for this
-incident, 60% is 12x the 5% baseline), never vague or mathematically incorrect ones.
+payloads, or internal implementation details. Calculate comparisons from this
+incident's supplied rates; never reuse figures from another incident.
 Treat error_source as a boundary signal, not a confirmed root cause. Clearly label any
-hypothesis. Use 100 subunits = 1 INR. Never claim a Razorpay operation ran unless a
+hypothesis. Use 100 subunits = 1 INR. Revenue at risk is the total across failed
+payments, never the per-payment amount. Never claim a Razorpay operation ran unless a
 tool result proves it. Do not call a write-capable tool unless the merchant explicitly
 asks to prepare a proposal, and never imply that a pending proposal was executed.
 `.trim()

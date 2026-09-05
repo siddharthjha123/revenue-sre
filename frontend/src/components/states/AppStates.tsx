@@ -1,4 +1,4 @@
-import { AlertTriangle, RefreshCcw, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, RefreshCcw } from 'lucide-react'
 
 export function ErrorState({ message, retry }: { message: string; retry: () => void }) {
   return (
@@ -9,14 +9,5 @@ export function ErrorState({ message, retry }: { message: string; retry: () => v
       <p>{message}</p>
       <button onClick={retry}><RefreshCcw />Retry connection</button>
     </main>
-  )
-}
-
-export function NoIncidentsState() {
-  return (
-    <div className="no-incidents-state">
-      <ShieldCheck />
-      <div><strong>Payment health is clear</strong><span>No active incidents need your attention.</span></div>
-    </div>
   )
 }

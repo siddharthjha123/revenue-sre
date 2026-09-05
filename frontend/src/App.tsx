@@ -11,7 +11,7 @@ import { DashboardSkeleton } from './components/DashboardSkeleton'
 import { type AppView, Sidebar } from './components/layout/Sidebar'
 import { TopBar } from './components/layout/TopBar'
 import { DecisionPanel } from './components/recovery/DecisionPanel'
-import { ErrorState, NoIncidentsState } from './components/states/AppStates'
+import { ErrorState } from './components/states/AppStates'
 import {
   decideProposal,
   executeProposal,
@@ -56,7 +56,7 @@ function App() {
       .sort((left, right) => right.revenue_at_risk_subunits - left.revenue_at_risk_subunits),
     [incidents],
   )
-  const selectedFallback = view === 'dashboard' ? openIncidents[0] : incidents[0]
+  const selectedFallback = openIncidents[0] ?? incidents[0]
   const activeIncidentId = selectedId ?? selectedFallback?.incident_id ?? null
   const selectedSummary =
     incidents.find((incident) => incident.incident_id === activeIncidentId) ?? selectedFallback
@@ -162,7 +162,6 @@ function App() {
         onClose={() => setMobileNav(false)}
         onNavigate={(nextView) => {
           setView(nextView)
-          setSelectedId(null)
         }}
       />
       <main className="app-main">
@@ -173,49 +172,46 @@ function App() {
           onRefresh={refresh}
         />
 
-        {view === 'dashboard' ? (
+        <div className="app-view" hidden={view !== 'dashboard'}>
           <>
             <KpiStrip summary={dashboardQuery.data} />
-            {openIncidents.length === 0 ? (
-              <NoIncidentsState />
-            ) : (
-              <section className="command-grid">
-                <IncidentQueue
-                  incidents={displayedOpenIncidents}
-                  selectedId={activeIncident?.incident_id ?? null}
-                  onSelect={setSelectedId}
-                />
-                <RevenueOperator
-                  key={activeIncident?.incident_id ?? 'no-incident'}
-                  incidents={openIncidents}
-                  activeIncident={activeIncident}
-                  onAttachIncident={setSelectedId}
-                  onRecoveryStage={updateRecoveryWorkflow}
-                  proposal={proposalQuery.data}
-                />
-                <DecisionPanel
-                  incident={activeIncident}
-                  proposal={proposalQuery.data}
-                  loading={proposalQuery.isPending && Boolean(activeIncident)}
-                  deciding={decision.isPending}
-                  executing={execution.isPending}
-                  workflow={recoveryWorkflow.incidentId === activeIncidentId
-                    ? recoveryWorkflow
-                    : { incidentId: activeIncidentId, stage: 'idle' }}
-                  onDecide={(proposalId, action, reason) => decision.mutate({ proposalId, action, reason })}
-                  onExecute={(proposalId) => execution.mutate(proposalId)}
-                />
-              </section>
-            )}
+            <section className="command-grid">
+              <IncidentQueue
+                incidents={displayedOpenIncidents}
+                selectedId={activeIncident?.incident_id ?? null}
+                onSelect={setSelectedId}
+              />
+              <RevenueOperator
+                key={activeIncident?.incident_id ?? 'no-incident'}
+                incidents={openIncidents}
+                activeIncident={activeIncident}
+                onAttachIncident={setSelectedId}
+                onRecoveryStage={updateRecoveryWorkflow}
+                proposal={proposalQuery.data}
+              />
+              <DecisionPanel
+                incident={activeIncident}
+                proposal={proposalQuery.data}
+                loading={proposalQuery.isPending && Boolean(activeIncident)}
+                deciding={decision.isPending}
+                executing={execution.isPending}
+                workflow={recoveryWorkflow.incidentId === activeIncidentId
+                  ? recoveryWorkflow
+                  : { incidentId: activeIncidentId, stage: 'idle' }}
+                onDecide={(proposalId, action, reason) => decision.mutate({ proposalId, action, reason })}
+                onExecute={(proposalId) => execution.mutate(proposalId)}
+              />
+            </section>
           </>
-        ) : (
+        </div>
+        <div className="app-view" hidden={view !== 'audit'}>
           <AuditView
             incidents={incidents}
             selectedIncident={activeIncident}
             auditEvents={auditQuery.data ?? []}
             onSelect={setSelectedId}
           />
-        )}
+        </div>
       </main>
     </div>
   )

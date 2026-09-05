@@ -591,11 +591,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 .decision-loading span { height: 62px; border-radius: 9px; background: rgba(244, 239, 226, 0.04); animation: soft-pulse 1.3s ease-in-out infinite alternate; }
 @keyframes soft-pulse { to { opacity: 0.45; } }
 
-.no-incidents-state { min-height: 430px; display: flex; align-items: center; justify-content: center; gap: 13px; border: 1px solid var(--line); border-radius: var(--radius-lg); color: var(--mint); background: var(--surface); }
-.no-incidents-state svg { width: 30px; }
-.no-incidents-state div { display: grid; gap: 4px; }
-.no-incidents-state strong { color: var(--text); }
-.no-incidents-state span { color: var(--muted); font-size: 10px; }
 .full-page-state { min-height: 100vh; display: grid; place-content: center; justify-items: center; padding: 24px; color: var(--text); background: var(--canvas); text-align: center; }
 .state-icon { width: 52px; height: 52px; display: grid; place-items: center; margin-bottom: 13px; border-radius: 15px; color: var(--red); background: rgba(255, 104, 104, 0.09); }
 .full-page-state > span { color: var(--orange); font: 8px 'DM Mono', monospace; text-transform: uppercase; }

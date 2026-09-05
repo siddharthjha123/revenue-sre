@@ -52,8 +52,8 @@ export function RevenueOperator({
   const queryClient = useQueryClient()
   const [input, setInput] = useState('')
   const briefing = useMemo(
-    () => getExecutiveBriefing(activeIncident, incidents.length),
-    [activeIncident, incidents.length],
+    () => getExecutiveBriefing(activeIncident, incidents),
+    [activeIncident, incidents],
   )
   const [messages, setMessages] = useState<ChatMessage[]>([
     { id: 0, role: 'assistant', content: '', specialist: 'Revenue operator', streaming: true },
