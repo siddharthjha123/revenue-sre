@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900" role="img" aria-labelledby="title description">
   <title id="title">Revenue SRE system architecture</title>
-  <desc id="description">Payment events move from merchant checkout and Razorpay into a FastAPI control plane. TrueForge performs read-only investigation and sandbox analysis. Deterministic policy, merchant approval, and an idempotent executor gate recovery actions. Results are stored as audit and recovery outcomes.</desc>
+  <desc id="description">Payment events move from merchant checkout and Razorpay into a FastAPI control plane. TrueForge and local Qwen perform evidence-grounded investigation through scoped MCP tools. Deterministic policy, merchant approval, and an idempotent executor gate recovery actions. Results are stored as audit and recovery outcomes.</desc>
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1020"/>
@@ -63,7 +63,7 @@
 
   <rect x="445" y="205" width="240" height="92" rx="14" fill="#18223f" stroke="#3a4876" filter="url(#shadow)"/>
   <text x="565" y="240" class="label">TrueForge</text>
-  <text x="565" y="265" class="detail">orchestration and sandbox</text>
+  <text x="565" y="265" class="detail">orchestration + local Qwen</text>
 
   <rect x="755" y="205" width="250" height="92" rx="14" fill="#18223f" stroke="#3a4876" filter="url(#shadow)"/>
   <text x="880" y="240" class="label">Incident analysis</text>
