@@ -78,7 +78,7 @@ export function ProposalGeneration({ stage, error }: ProposalGenerationProps) {
 
       <div className="generation-visual">
         <div className="generation-orbit"><FileSearch /><i /><i /></div>
-        <p>AI-GENERATED · POLICY-BOUND</p>
+        <p>AI-ORCHESTRATED · POLICY-BOUND</p>
         <h3>{copy.title}</h3>
         <span>{copy.detail}</span>
       </div>

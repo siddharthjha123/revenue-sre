@@ -12,6 +12,11 @@ from ..database.base import get_db_session
 from ..database.models.incident import Incident
 from ..database.repositories.incident_repository import IncidentRepository
 from ..database.repositories.recovery_repository import RecoveryRepository
+from ..mcp.recovery_tools import (
+    EvidenceVerificationError,
+    NoRecoverablePaymentsError,
+    RecoveryAgentTools,
+)
 from ..observability.context import get_correlation_id
 from ..schemas.audit import ApprovalDecisionType, AuditEvent
 from ..schemas.incident import (
@@ -21,6 +26,7 @@ from ..schemas.incident import (
     IncidentEvidenceResponse,
 )
 from ..schemas.recovery import (
+    BoundedRecoveryProposalRequest,
     ProposalDecisionRequest,
     ProposalDecisionResponse,
     RecoveryProposalCreate,
@@ -119,6 +125,45 @@ async def create_recovery_proposal(
             )
     except RecoveryNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post(
+    "/incidents/{incident_id}/bounded-proposal",
+    response_model=RecoveryProposalResponse,
+)
+async def create_bounded_recovery_proposal(
+    incident_id: UUID,
+    request: BoundedRecoveryProposalRequest,
+    merchant_id: Annotated[UUID, Depends(require_merchant)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> RecoveryProposalResponse:
+    """Run the MCP proposal derivation behind a narrow merchant command.
+
+    The request supplies no payment IDs, amounts, evidence IDs, or policy limits.
+    Those values are derived from verified incident evidence by the same service
+    used by ``create_bounded_recovery_proposal`` in the Revenue SRE MCP. This
+    endpoint persists a review record only and never executes Razorpay.
+    """
+
+    if await IncidentRepository(session).get(merchant_id, incident_id) is None:
+        raise HTTPException(status_code=404, detail="Incident was not found")
+
+    try:
+        proposal = await RecoveryAgentTools(settings=settings).create_bounded_proposal(
+            incident_id=incident_id,
+            action_type=request.action_type,
+            rationale=request.rationale,
+            expires_in_minutes=request.expires_in_minutes,
+        )
+    except (EvidenceVerificationError, NoRecoverablePaymentsError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except RecoveryNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    if proposal.merchant_id != merchant_id:
+        raise HTTPException(status_code=404, detail="Incident was not found")
+    return proposal
 
 
 @router.get(

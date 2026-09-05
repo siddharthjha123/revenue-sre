@@ -139,6 +139,16 @@ class RecoveryProposalCreate(BaseModel):
     created_by: str = Field(min_length=1, max_length=256)
 
 
+class BoundedRecoveryProposalRequest(BaseModel):
+    """Minimal command whose financial scope is derived entirely by the backend."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    action_type: RecoveryActionType = RecoveryActionType.CREATE_PAYMENT_LINK
+    rationale: str = Field(min_length=1, max_length=1000)
+    expires_in_minutes: int = Field(default=30, ge=1, le=1440)
+
+
 class RecoveryActionResponse(RecoveryAction):
     """Persisted proposal action."""
 

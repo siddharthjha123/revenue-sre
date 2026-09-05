@@ -10,7 +10,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Bot, Check, LoaderCircle, Send, ShieldCheck, Sparkles, Trash2 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 
-import type { Incident } from '../../lib/api'
+import { createBoundedProposal, type Incident, type Proposal } from '../../lib/api'
+import { formatMoney } from '../../lib/format'
 import { evidenceIsVerified, incidentLabel } from '../../lib/incidents'
 import { getExecutiveBriefing, streamIncidentTurn } from '../../lib/trueforge'
 import {
@@ -88,6 +89,23 @@ export function RevenueOperator({
       proposalRequested: boolean
     }) => {
       if (!activeIncident) throw new Error('Attach an incident before asking a question.')
+      if (proposalRequested) {
+        setActivity('Verifying evidence for bounded recovery')
+        onRecoveryStage('investigating')
+        const proposal = await createBoundedProposal(activeIncident.incident_id)
+        onRecoveryStage('evidence_verified')
+        await pause(260)
+        setActivity('Applying deterministic recovery policy')
+        onRecoveryStage('policy_checking')
+        await pause(320)
+        setActivity('Loading proposal for merchant review')
+        onRecoveryStage('persisting')
+        return {
+          content: proposalConfirmation(proposal),
+          toolsCompleted: true,
+          proposalCreated: true,
+        }
+      }
       return streamIncidentTurn(activeIncident, message, {
         onDelta: (content) => setMessages((current) => current.map((item) =>
           item.id === responseId ? { ...item, content, streaming: true } : item,
@@ -290,4 +308,19 @@ function renderInline(value: string) {
     }
     return part
   })
+}
+
+function pause(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+}
+
+function proposalConfirmation(proposal: Proposal) {
+  const approvalState = proposal.status === 'pending_approval'
+    ? 'Merchant approval is required'
+    : `Merchant decision is already ${proposal.status.replaceAll('_', ' ')}`
+  return `Bounded proposal **${proposal.proposal_id}** is ready for review.\n` +
+    `- **Status:** ${proposal.status.replaceAll('_', ' ')}\n` +
+    `- **Scope:** ${proposal.action_count} actions, up to ${formatMoney(proposal.maximum_recoverable_amount_subunits)}\n` +
+    `- **Policy:** ${proposal.policy_version}; ${proposal.omitted_payment_count ?? 0} eligible payments omitted by limits\n` +
+    `- **Safety:** ${approvalState}. No Razorpay action was executed.`
 }

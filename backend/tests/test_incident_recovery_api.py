@@ -12,6 +12,8 @@ from sqlalchemy.pool import StaticPool
 from backend.app.config import get_settings
 from backend.app.database.base import Base, get_db_session
 from backend.app.main import create_app
+from backend.app.mcp.recovery_tools import RecoveryAgentTools
+from backend.app.schemas.recovery import RecoveryProposalResponse
 from backend.tests.incident_test_support import (
     MERCHANT_A,
     MERCHANT_B,
@@ -178,6 +180,55 @@ async def test_active_incident_proposal_is_null_before_agent_creation(api_contex
 
     assert response.status_code == 200
     assert response.json() is None
+
+
+@pytest.mark.asyncio
+async def test_bounded_proposal_command_accepts_no_financial_scope(
+    api_context,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, incident_id = api_context
+    headers = {"X-Merchant-Id": str(MERCHANT_A)}
+    persisted = await client.post(
+        f"/incidents/{incident_id}/proposals",
+        headers=headers,
+        json={
+            "actions": [
+                {
+                    "payment_id": "pay_CURF0",
+                    "action_type": "create_payment_link",
+                    "amount_subunits": 10000,
+                    "rationale": "Offer one approved retry path.",
+                }
+            ],
+            "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
+            "created_by": "trueforge-agent",
+        },
+    )
+    proposal = RecoveryProposalResponse.model_validate(persisted.json())
+
+    async def return_policy_derived_proposal(*args, **kwargs):
+        return proposal
+
+    monkeypatch.setattr(
+        RecoveryAgentTools,
+        "create_bounded_proposal",
+        return_policy_derived_proposal,
+    )
+
+    response = await client.post(
+        f"/incidents/{incident_id}/bounded-proposal",
+        headers=headers,
+        json={
+            "action_type": "create_payment_link",
+            "rationale": "Offer one approval-gated retry path.",
+            "expires_in_minutes": 30,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["proposal_id"] == str(proposal.proposal_id)
+    assert response.json()["execution_performed"] is False
 
 
 @pytest.mark.asyncio
