@@ -4,30 +4,57 @@ import { AnimatePresence, motion } from 'motion/react'
 
 import type { Incident, Proposal } from '../../lib/api'
 import { formatMoney, formatTime } from '../../lib/format'
+import {
+  type RecoveryWorkflowState,
+  recoveryWorkflowIsActive,
+} from '../../lib/recoveryWorkflow'
+import { ProposalGeneration } from './ProposalGeneration'
 
 interface DecisionPanelProps {
   incident: Incident | null
   proposal: Proposal | null | undefined
   loading: boolean
   deciding: boolean
+  workflow: RecoveryWorkflowState
   onDecide: (proposalId: string, action: 'approve' | 'reject', reason?: string) => void
 }
 
-export function DecisionPanel({ incident, proposal, loading, deciding, onDecide }: DecisionPanelProps) {
+export function DecisionPanel({
+  incident,
+  proposal,
+  loading,
+  deciding,
+  workflow,
+  onDecide,
+}: DecisionPanelProps) {
   const [reason, setReason] = useState('')
   const pending = proposal?.status === 'pending_approval'
+  const generating = recoveryWorkflowIsActive(workflow.stage)
+  const generationFailed = workflow.stage === 'failed'
 
   return (
     <section className="mission-panel decision-panel" aria-label="Merchant decision">
       <div className="mission-panel-heading">
         <div><span className="panel-index">03</span><div><p>Authority boundary</p><h2>Decision required</h2></div></div>
         <span className={`decision-status ${pending ? 'needs-attention' : ''}`}>
-          {loading ? 'Checking' : pending ? 'Review now' : proposal ? proposal.status.replaceAll('_', ' ') : 'Standby'}
+          {generating
+            ? 'Agent working'
+            : generationFailed
+              ? 'Needs attention'
+              : loading
+                ? 'Checking'
+                : pending
+                  ? 'Review now'
+                  : proposal
+                    ? proposal.status.replaceAll('_', ' ')
+                    : 'Standby'}
         </span>
       </div>
 
       <AnimatePresence mode="wait">
-        {loading ? (
+        {generating || generationFailed ? (
+          <ProposalGeneration key={`workflow-${workflow.stage}`} stage={workflow.stage} error={workflow.error} />
+        ) : loading ? (
           <motion.div className="decision-loading" key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <span /><span /><span />
           </motion.div>

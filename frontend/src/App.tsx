@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
@@ -21,12 +21,21 @@ import {
   getIncidents,
 } from './lib/api'
 import { incidentIsOpen } from './lib/incidents'
+import {
+  recoveryWorkflowIsActive,
+  type RecoveryWorkflowStage,
+  type RecoveryWorkflowState,
+} from './lib/recoveryWorkflow'
 
 function App() {
   const queryClient = useQueryClient()
   const [view, setView] = useState<AppView>('dashboard')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [mobileNav, setMobileNav] = useState(false)
+  const [recoveryWorkflow, setRecoveryWorkflow] = useState<RecoveryWorkflowState>({
+    incidentId: null,
+    stage: 'idle',
+  })
 
   const incidentsQuery = useQuery({
     queryKey: ['incidents'],
@@ -66,8 +75,30 @@ function App() {
     queryKey: ['incident-proposal', activeIncidentId],
     queryFn: () => getActiveProposal(activeIncidentId!),
     enabled: Boolean(activeIncidentId),
-    refetchInterval: 5_000,
+    refetchInterval: recoveryWorkflowIsActive(recoveryWorkflow.stage) ? 1_000 : 5_000,
   })
+
+  useEffect(() => {
+    if (
+      activeIncidentId &&
+      recoveryWorkflow.incidentId === activeIncidentId &&
+      recoveryWorkflow.stage === 'persisting' &&
+      proposalQuery.data
+    ) {
+      const timer = window.setTimeout(() => {
+        setRecoveryWorkflow({ incidentId: activeIncidentId, stage: 'ready' })
+      }, 650)
+      return () => window.clearTimeout(timer)
+    }
+  }, [activeIncidentId, proposalQuery.data, recoveryWorkflow])
+
+  const updateRecoveryWorkflow = (stage: RecoveryWorkflowStage, error?: string) => {
+    setRecoveryWorkflow({ incidentId: activeIncidentId, stage, error })
+    if (stage === 'persisting' && activeIncidentId) {
+      void queryClient.invalidateQueries({ queryKey: ['incident-proposal', activeIncidentId] })
+      void queryClient.invalidateQueries({ queryKey: ['incident-audit', activeIncidentId] })
+    }
+  }
 
   const decision = useMutation({
     mutationFn: ({
@@ -146,12 +177,16 @@ function App() {
                   incidents={openIncidents}
                   activeIncident={activeIncident}
                   onAttachIncident={setSelectedId}
+                  onRecoveryStage={updateRecoveryWorkflow}
                 />
                 <DecisionPanel
                   incident={activeIncident}
                   proposal={proposalQuery.data}
                   loading={proposalQuery.isPending && Boolean(activeIncident)}
                   deciding={decision.isPending}
+                  workflow={recoveryWorkflow.incidentId === activeIncidentId
+                    ? recoveryWorkflow
+                    : { incidentId: activeIncidentId, stage: 'idle' }}
                   onDecide={(proposalId, action, reason) => decision.mutate({ proposalId, action, reason })}
                 />
               </section>
