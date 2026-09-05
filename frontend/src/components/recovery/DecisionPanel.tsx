@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Clock3, FileCheck2, LockKeyhole, ShieldCheck, X } from 'lucide-react'
+import { Check, Clock3, Copy, ExternalLink, FileCheck2, LockKeyhole, ShieldCheck, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 
 import type { Incident, Proposal } from '../../lib/api'
@@ -15,8 +15,10 @@ interface DecisionPanelProps {
   proposal: Proposal | null | undefined
   loading: boolean
   deciding: boolean
+  executing: boolean
   workflow: RecoveryWorkflowState
   onDecide: (proposalId: string, action: 'approve' | 'reject', reason?: string) => void
+  onExecute: (proposalId: string) => void
 }
 
 export function DecisionPanel({
@@ -24,8 +26,10 @@ export function DecisionPanel({
   proposal,
   loading,
   deciding,
+  executing,
   workflow,
   onDecide,
+  onExecute,
 }: DecisionPanelProps) {
   const [reason, setReason] = useState('')
   const pending = proposal?.status === 'pending_approval'
@@ -88,9 +92,28 @@ export function DecisionPanel({
                   <button className="approve-action" disabled={deciding} onClick={() => onDecide(proposal.proposal_id, 'approve', reason || undefined)}><LockKeyhole />Approve exact plan</button>
                 </div>
               </div>
+            ) : proposal.status === 'approved' ? (
+              <div className="approved-execution">
+                <div className="decision-record approved"><FileCheck2 /><div><strong>Approval recorded</strong><span>The exact plan can now be sent to the restricted Razorpay adapter.</span></div></div>
+                <button className="execute-action" disabled={executing} onClick={() => onExecute(proposal.proposal_id)}>
+                  <ExternalLink />{executing ? 'Creating secure links…' : 'Create approved payment links'}
+                </button>
+              </div>
             ) : (
               <div className={`decision-record ${proposal.status}`}><FileCheck2 /><div><strong>Immutable decision recorded</strong><span>The audit timeline preserves this exact proposal state.</span></div></div>
             )}
+
+            {proposal.actions.some((action) => action.payment_link_url) ? (
+              <div className="payment-links-list">
+                <strong>Razorpay links</strong>
+                {proposal.actions.filter((action) => action.payment_link_url).map((action, index) => (
+                  <div key={action.action_id}>
+                    <span>Recovery {index + 1} · {formatMoney(action.amount_subunits)}</span>
+                    <button aria-label={`Copy recovery link ${index + 1}`} onClick={() => void navigator.clipboard.writeText(action.payment_link_url!)}><Copy />Copy</button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </motion.div>
         ) : (
           <motion.div className="decision-empty" key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>

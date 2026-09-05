@@ -14,6 +14,7 @@ import { DecisionPanel } from './components/recovery/DecisionPanel'
 import { ErrorState, NoIncidentsState } from './components/states/AppStates'
 import {
   decideProposal,
+  executeProposal,
   getActiveProposal,
   getAuditTrail,
   getDashboardSummary,
@@ -120,6 +121,18 @@ function App() {
     onError: (error) => toast.error('Decision could not be recorded', { description: error.message }),
   })
 
+  const execution = useMutation({
+    mutationFn: (proposalId: string) => executeProposal(proposalId),
+    onSuccess: (result) => {
+      toast.success(`${result.executed_count} payment link${result.executed_count === 1 ? '' : 's'} created`, {
+        description: 'Razorpay test-mode links are ready to copy and share.',
+      })
+      void queryClient.invalidateQueries({ queryKey: ['incident-proposal'] })
+      void queryClient.invalidateQueries({ queryKey: ['merchant-audit'] })
+    },
+    onError: (error) => toast.error('Recovery could not be executed', { description: error.message }),
+  })
+
   const refresh = () => {
     void incidentsQuery.refetch()
     void dashboardQuery.refetch()
@@ -185,10 +198,12 @@ function App() {
                   proposal={proposalQuery.data}
                   loading={proposalQuery.isPending && Boolean(activeIncident)}
                   deciding={decision.isPending}
+                  executing={execution.isPending}
                   workflow={recoveryWorkflow.incidentId === activeIncidentId
                     ? recoveryWorkflow
                     : { incidentId: activeIncidentId, stage: 'idle' }}
                   onDecide={(proposalId, action, reason) => decision.mutate({ proposalId, action, reason })}
+                  onExecute={(proposalId) => execution.mutate(proposalId)}
                 />
               </section>
             )}

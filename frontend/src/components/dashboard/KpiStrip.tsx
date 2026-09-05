@@ -44,6 +44,7 @@ function preferredAmount(amounts: CurrencyAmount[]) {
 export function KpiStrip({ summary }: KpiStripProps) {
   const capturedRevenue = preferredAmount(summary.captured_revenue_today)
   const risk = preferredAmount(summary.open_revenue_at_risk)
+  const recovered = preferredAmount(summary.recovered_revenue_today)
 
   return (
     <section className="kpi-strip" aria-label="Today's payment overview">
@@ -82,10 +83,9 @@ export function KpiStrip({ summary }: KpiStripProps) {
       <KpiCard
         icon={<BanknoteArrowUp />}
         label="Amount recovered"
-        value="—"
-        detail="Outcome engine pending"
+        value={formatMoney(recovered.amount_subunits, recovered.currency)}
+        detail="Verified by paid-link webhooks"
         tone="ai"
-        pending
       />
     </section>
   )
