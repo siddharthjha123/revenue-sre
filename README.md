@@ -47,6 +47,10 @@ signed payment events
 - Recomputes incident metrics before allowing a recovery proposal.
 - Applies deterministic amount, action, expiry, cooldown, and contact limits.
 - Requires a separate merchant approval or rejection and records every decision.
+- Executes only approved, hash-bound recovery actions through a restricted
+  Razorpay test-mode Payment Link adapter.
+- Attributes signed `payment_link.paid` webhooks back to exact proposal actions
+  and reports verified recovered revenue.
 - Presents the complete flow in a responsive React command center.
 
 ## Architecture
@@ -88,6 +92,10 @@ directly perform a payment action.
    IDs and amounts and applies the policy engine before persistence.
 8. A merchant approves or rejects the immutable proposal through a separate API.
    The decision and proposal hash are retained in the audit timeline.
+9. The restricted executor rechecks authority, expiry, payment eligibility, and
+   plan integrity before creating Razorpay test-mode Payment Links.
+10. Signed outcome webhooks attribute paid links to their evidence-bound actions,
+    update remaining risk, and append the measured result to the audit timeline.
 
 ## Safety boundaries
 
@@ -103,12 +111,13 @@ directly perform a payment action.
 
 ### Deliberate MVP boundary
 
-The current MVP does **not** claim Razorpay payment-link execution, customer
-notification delivery, or recovered-revenue attribution. Daytona could not be
-configured during the event, so evidence verification uses an explicit
-deterministic MCP fallback and reports
-`native_trueforge_sandbox_used: false`. No fallback is presented as native
-sandbox execution.
+The current MVP executes only Razorpay **test-mode** Payment Link creation after
+explicit merchant approval. It does not deliver customer notifications; links
+are intended for an existing CRM, support, or messaging workflow. Customer
+contact data never enters agent context. Daytona could not be configured during
+the event, so evidence verification uses an explicit deterministic backend
+fallback and reports `native_trueforge_sandbox_used: false`. No fallback is
+presented as native sandbox execution.
 
 ## Technology
 
@@ -199,9 +208,9 @@ With the API and worker running:
 ```
 
 The loader submits 150 signed, PII-free Razorpay-format webhooks through the
-real ingestion endpoint. It includes healthy control traffic and one segment
-whose failure rate moves from 5% to 60%, producing a persistent incident with
-₹12,000 at risk.
+real ingestion endpoint. It produces two ranked UPI incidents—HDFC at 60% with
+₹12,000 at risk and AXIS at 50% with ₹7,500 at risk—while healthy ICICI card
+traffic remains below the incident thresholds.
 
 ## Verify the project
 
@@ -223,8 +232,9 @@ The saved TrueForge agent uses a self-hosted Qwen model through an
 OpenAI-compatible endpoint and connects to the Revenue SRE MCP server. The MCP
 tools let it list incidents, retrieve evidence, verify calculations, create a
 non-executing bounded proposal, read proposal status, and explain the audit
-timeline. The official Razorpay MCP is a separate connector for real test-mode
-provider investigation; synthetic demo payment IDs are never sent to it.
+timeline. After a separate merchant decision, the backend's restricted Razorpay
+MCP adapter may create test-mode Payment Links from the approved immutable plan;
+synthetic demo payment IDs are carried only as recovery references.
 
 See [the TrueForge workflow](docs/trueforge-mvp.md),
 [architecture](docs/architecture.md), [threat model](docs/threat-model.md), and
