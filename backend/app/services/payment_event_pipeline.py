@@ -6,8 +6,10 @@ from ..config import Settings
 from ..database.models.payment_event_fact import PaymentEventFact
 from ..database.models.webhook_event import WebhookEvent
 from ..database.repositories.payment_fact_repository import PaymentFactRepository
+from ..schemas.webhook import SupportedWebhookEvent
 from .event_normalizer import PaymentEventNormalizer, normalize_payment_event
 from .incident_detector import IncidentDetector
+from .recovery_outcome_service import RecoveryOutcomeService
 
 
 class PaymentEventPipeline:
@@ -16,6 +18,7 @@ class PaymentEventPipeline:
     def __init__(self, settings: Settings | None = None) -> None:
         self._normalizer = PaymentEventNormalizer()
         self._detector = IncidentDetector(settings)
+        self._outcomes = RecoveryOutcomeService()
 
     async def __call__(self, event: WebhookEvent, session: AsyncSession) -> None:
         normalized = normalize_payment_event(event)
@@ -43,6 +46,8 @@ class PaymentEventPipeline:
             )
         )
         await self._normalizer.normalize_and_persist(event, session)
+        if event.event_type == SupportedWebhookEvent.PAYMENT_LINK_PAID:
+            await self._outcomes.record_payment_link_paid(event, session)
         await self._detector.detect(
             session,
             merchant_id=event.merchant_id,

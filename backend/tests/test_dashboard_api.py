@@ -76,6 +76,7 @@ async def test_dashboard_summary_uses_real_merchant_aggregates(dashboard_context
     assert summary["total_incident_count"] == 3
     assert summary["open_incident_count"] == 2
     assert summary["open_revenue_at_risk"] == [{"currency": "INR", "amount_subunits": 50_000}]
+    assert summary["recovered_revenue_today"] == []
     assert summary["reporting_timezone"] == "Asia/Kolkata"
 
 

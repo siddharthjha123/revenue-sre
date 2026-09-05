@@ -29,12 +29,15 @@ from ..schemas.recovery import (
     BoundedRecoveryProposalRequest,
     ProposalDecisionRequest,
     ProposalDecisionResponse,
+    ProposalExecutionRequest,
+    ProposalExecutionResponse,
     RecoveryProposalCreate,
     RecoveryProposalResponse,
 )
 from ..services.incident_commander import answer_incident_question
 from ..services.recovery_service import (
     RecoveryConflictError,
+    RecoveryExecutionDisabledError,
     RecoveryNotFoundError,
     RecoveryPolicyRejectedError,
     RecoveryService,
@@ -278,6 +281,36 @@ async def reject_recovery_proposal(
         decision=ApprovalDecisionType.REJECTED,
         settings=settings,
     )
+
+
+@router.post(
+    "/proposals/{proposal_id}/execute",
+    response_model=ProposalExecutionResponse,
+)
+async def execute_recovery_proposal(
+    proposal_id: UUID,
+    request: ProposalExecutionRequest,
+    merchant_id: Annotated[UUID, Depends(require_merchant)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ProposalExecutionResponse:
+    """Execute an approved exact plan through the restricted Razorpay MCP adapter."""
+
+    try:
+        async with session.begin():
+            return await RecoveryService(settings).execute_proposal(
+                session,
+                merchant_id=merchant_id,
+                proposal_id=proposal_id,
+                executed_by=request.executed_by,
+                correlation_id=get_correlation_id(),
+            )
+    except RecoveryNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RecoveryExecutionDisabledError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except RecoveryConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/incidents/{incident_id}/audit", response_model=list[AuditEvent])

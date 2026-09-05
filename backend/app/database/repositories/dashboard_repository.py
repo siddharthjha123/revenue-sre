@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...schemas.incident import IncidentStatus
 from ..models.incident import Incident
 from ..models.payment_attempt import PaymentAttempt
+from ..models.recovery import RecoveryProposal, RecoveryProposalAction
 
 ACTIONABLE_INCIDENT_STATUSES = (IncidentStatus.OPEN, IncidentStatus.INVESTIGATING)
 
@@ -29,6 +30,7 @@ class DashboardSnapshot:
     total_incident_count: int
     open_incident_count: int
     open_revenue_at_risk: Sequence[MoneyTotal]
+    recovered_revenue_today: Sequence[MoneyTotal]
 
 
 class DashboardRepository:
@@ -96,6 +98,23 @@ class DashboardRepository:
             .group_by(Incident.currency)
         )
 
+        recovered_revenue_today = await self._money_totals(
+            select(
+                RecoveryProposal.currency,
+                func.sum(RecoveryProposalAction.recovered_amount_subunits),
+            )
+            .join(
+                RecoveryProposalAction,
+                RecoveryProposalAction.proposal_id == RecoveryProposal.id,
+            )
+            .where(
+                RecoveryProposal.merchant_id == merchant_id,
+                RecoveryProposalAction.recovered_at >= reporting_day_start,
+                RecoveryProposalAction.recovered_at < reporting_day_end,
+            )
+            .group_by(RecoveryProposal.currency)
+        )
+
         return DashboardSnapshot(
             total_payment_attempts=int(payment_counts[0]),
             captured_payment_count=int(payment_counts[1]),
@@ -103,6 +122,7 @@ class DashboardRepository:
             total_incident_count=int(incident_counts[0]),
             open_incident_count=int(incident_counts[1]),
             open_revenue_at_risk=open_revenue_at_risk,
+            recovered_revenue_today=recovered_revenue_today,
         )
 
     async def _money_totals(self, statement) -> list[MoneyTotal]:

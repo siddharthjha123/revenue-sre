@@ -27,6 +27,7 @@ class DashboardSummary(BaseModel):
     total_incident_count: int = Field(ge=0)
     open_incident_count: int = Field(ge=0)
     open_revenue_at_risk: list[CurrencyAmount]
+    recovered_revenue_today: list[CurrencyAmount]
     reporting_timezone: str
     reporting_day: date
     generated_at: AwareDatetime

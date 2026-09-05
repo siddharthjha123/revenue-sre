@@ -49,6 +49,10 @@ async def get_dashboard_summary(
             CurrencyAmount(currency=item.currency, amount_subunits=item.amount_subunits)
             for item in snapshot.open_revenue_at_risk
         ],
+        recovered_revenue_today=[
+            CurrencyAmount(currency=item.currency, amount_subunits=item.amount_subunits)
+            for item in snapshot.recovered_revenue_today
+        ],
         reporting_timezone=REPORTING_TIMEZONE_NAME,
         reporting_day=reporting_day,
         generated_at=generated_at,

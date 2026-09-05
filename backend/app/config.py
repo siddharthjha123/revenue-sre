@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     recovery_proposal_cooldown_minutes: int = Field(default=15, ge=0, le=10080)
     recovery_max_customer_contacts: int = Field(default=1, ge=0, le=3)
     execution_enabled: bool = False
+    razorpay_mcp_url: str = Field(
+        default="https://mcp.razorpay.com/mcp",
+        min_length=1,
+        max_length=2048,
+    )
+    razorpay_mcp_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     mcp_host: str = Field(default="127.0.0.1", min_length=1, max_length=255)
     mcp_port: int = Field(default=8010, ge=1, le=65_535)
     mcp_allowed_hosts: list[str] = Field(
