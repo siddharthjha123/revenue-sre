@@ -41,7 +41,7 @@ def proposal_context(**overrides) -> ProposalPolicyContext:
         "incident_status": "open",
         "incident_currency": "INR",
         "incident_money_at_risk_subunits": 200000,
-        "eligible_payment_ids": frozenset({"pay_TU17WFeXwe0HQr"}),
+        "eligible_payment_amounts": {"pay_TU17WFeXwe0HQr": 100000},
         "eligible_evidence_ids": frozenset({str(EVIDENCE_ID)}),
         "maximum_plan_amount_subunits": 200000,
         "maximum_actions": 5,
@@ -86,3 +86,13 @@ def test_proposal_policy_enforces_amount_and_contact_limits(recovery_plan) -> No
     assert decision.allowed is False
     assert "proposal exceeds the configured amount limit" in decision.reasons
     assert "proposal exceeds the customer contact limit" in decision.reasons
+
+
+def test_proposal_policy_rejects_tampered_payment_amount(recovery_plan) -> None:
+    recovery_plan.actions[0].amount_subunits = 90_000
+    recovery_plan.total_amount_subunits = 90_000
+
+    decision = evaluate_recovery_proposal(recovery_plan, proposal_context())
+
+    assert decision.allowed is False
+    assert "proposal amount does not match the current payment amount" in decision.reasons

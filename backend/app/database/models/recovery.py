@@ -15,13 +15,14 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     Uuid,
+    event,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...schemas.audit import ApprovalDecisionType, AuditActorType, AuditEventType
-from ...schemas.recovery import RecoveryActionType, RecoveryPlanStatus
+from ...schemas.recovery import RecoveryActionType, RecoveryExecutionStatus, RecoveryPlanStatus
 from ..base import Base
 
 
@@ -58,6 +59,8 @@ class RecoveryProposal(Base):
     policy_reasons: Mapped[list[str]] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
     )
+    eligible_payment_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    omitted_payment_count: Mapped[int] = mapped_column(Integer, nullable=False)
     evidence_ids: Mapped[list[str]] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list
     )
@@ -71,7 +74,7 @@ class RecoveryProposal(Base):
 
 
 class RecoveryProposalAction(Base):
-    """One bounded action in a proposal; actions are not executable in Block 2."""
+    """One bounded action and its restricted provider execution result."""
 
     __tablename__ = "recovery_proposal_actions"
     __table_args__ = (Index("ix_recovery_actions_proposal", "proposal_id"),)
@@ -93,6 +96,25 @@ class RecoveryProposalAction(Base):
     amount_subunits: Mapped[int] = mapped_column(Integer, nullable=False)
     rationale: Mapped[str] = mapped_column(String(1000), nullable=False)
     requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    execution_status: Mapped[RecoveryExecutionStatus] = mapped_column(
+        Enum(
+            RecoveryExecutionStatus,
+            name="recovery_execution_status",
+            native_enum=False,
+            values_callable=lambda e: [i.value for i in e],
+        ),
+        nullable=False,
+        default=RecoveryExecutionStatus.NOT_STARTED,
+        server_default=RecoveryExecutionStatus.NOT_STARTED.value,
+    )
+    provider_payment_link_id: Mapped[str | None] = mapped_column(String(64))
+    payment_link_url: Mapped[str | None] = mapped_column(String(2048))
+    execution_reference_id: Mapped[str | None] = mapped_column(String(40), unique=True)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    execution_error_code: Mapped[str | None] = mapped_column(String(128))
+    recovered_payment_id: Mapped[str | None] = mapped_column(String(64))
+    recovered_amount_subunits: Mapped[int | None] = mapped_column(Integer)
+    recovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ApprovalRecord(Base):
@@ -122,8 +144,23 @@ class ApprovalRecord(Base):
         nullable=False,
     )
     decided_by: Mapped[str] = mapped_column(String(256), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(1000))
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     plan_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class ImmutableApprovalRecordError(RuntimeError):
+    """Raised when application code attempts to mutate merchant authority."""
+
+
+@event.listens_for(ApprovalRecord, "before_update")
+def _reject_approval_update(*_) -> None:
+    raise ImmutableApprovalRecordError("Approval records are append-only")
+
+
+@event.listens_for(ApprovalRecord, "before_delete")
+def _reject_approval_delete(*_) -> None:
+    raise ImmutableApprovalRecordError("Approval records are append-only")
 
 
 class AuditRecord(Base):

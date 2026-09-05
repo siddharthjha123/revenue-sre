@@ -1,4 +1,4 @@
-"""Load one incident through the authenticated production webhook pipeline.
+"""Load two incidents through the authenticated production webhook pipeline.
 
 This utility never inserts incidents or evidence directly. It emits a realistic,
 PII-free batch of Razorpay-format demo webhooks through the running API, then
@@ -44,9 +44,13 @@ class DemoEvent:
 
 
 TARGET_SEGMENT = "target_upi_timeout"
+SECONDARY_TARGET_SEGMENT = "secondary_upi_timeout"
 EXPECTED_EVENT_COUNT = 150
 EXPECTED_CURRENT_FAILURE_RATE = 0.60
 EXPECTED_REVENUE_AT_RISK_SUBUNITS = 1_200_000
+EXPECTED_SECONDARY_FAILURE_RATE = 0.50
+EXPECTED_SECONDARY_REVENUE_AT_RISK_SUBUNITS = 750_000
+EXPECTED_INCIDENT_COUNT = 2
 DEMO_TARGET_BANKS = ("HDFC", "AXIS", "KOTAK", "YESB", "IDFC")
 
 
@@ -70,13 +74,18 @@ def build_demo_events(
     run_id: str,
     *,
     target_bank: str = "HDFC",
+    secondary_bank: str = "AXIS",
 ) -> list[DemoEvent]:
-    """Build a 150-payment batch containing one explainable anomaly.
+    """Build a 150-payment batch containing two explainable anomalies.
 
     HDFC UPI traffic moves from 2/40 baseline failures (5%) to 12/20
-    current failures (60%). The SBI UPI and ICICI card segments remain below
-    the minimum failure count/rate and act as controls against false positives.
+    current failures (60%). AXIS UPI moves from 1/30 failures (3.33%) to 10/20
+    failures (50%). ICICI card traffic remains below the minimum failure count
+    and acts as a control against false positives.
     """
+
+    if target_bank == secondary_bank:
+        raise ValueError("Demo incident banks must be distinct")
 
     segments = (
         DemoSegment(
@@ -90,8 +99,18 @@ def build_demo_events(
             12,
             100_000,
         ),
-        DemoSegment("upi_sbi_healthy", "upi", "SBI", "payment_timed_out", 30, 1, 15, 1, 75_000),
-        DemoSegment("card_icici_noise", "card", "ICICI", "card_declined", 30, 1, 15, 2, 125_000),
+        DemoSegment(
+            SECONDARY_TARGET_SEGMENT,
+            "upi",
+            secondary_bank,
+            "payment_timed_out",
+            30,
+            1,
+            20,
+            10,
+            75_000,
+        ),
+        DemoSegment("card_icici_noise", "card", "ICICI", "card_declined", 25, 1, 15, 0, 125_000),
     )
     events: list[DemoEvent] = []
     sequence = 0
@@ -197,15 +216,15 @@ def load_demo_incident(
         for incident in existing_incidents
         if incident.get("method") == "upi" and incident.get("error_reason") == "payment_timed_out"
     }
-    target_bank = next(
-        (bank for bank in DEMO_TARGET_BANKS if bank not in previously_used_banks),
-        None,
+    target_banks = [bank for bank in DEMO_TARGET_BANKS if bank not in previously_used_banks][:2]
+    if len(target_banks) < EXPECTED_INCIDENT_COUNT:
+        raise DemoLoadError("Fewer than two unused demo banks remain; use a clean demo database")
+    events = build_demo_events(
+        anchor,
+        run_id,
+        target_bank=target_banks[0],
+        secondary_bank=target_banks[1],
     )
-    if target_bank is None:
-        raise DemoLoadError(
-            "All demo target banks already have incidents; use a clean demo database"
-        )
-    events = build_demo_events(anchor, run_id, target_bank=target_bank)
     accepted = 0
     for index, event in enumerate(events):
         payload = event_payload(event, settings.razorpay_account_id)
@@ -237,30 +256,62 @@ def load_demo_incident(
             incident
             for incident in incidents
             if incident.get("method") == "upi"
-            and incident.get("bank") == target_bank
+            and incident.get("bank") in target_banks
             and incident.get("error_reason") == "payment_timed_out"
         ]
-        if matching:
-            incident = matching[0]
-            if (
-                incident.get("current_failure_rate") != EXPECTED_CURRENT_FAILURE_RATE
-                or incident.get("revenue_at_risk_subunits") != EXPECTED_REVENUE_AT_RISK_SUBUNITS
+        if len(matching) == EXPECTED_INCIDENT_COUNT:
+            incidents_by_bank = {incident["bank"]: incident for incident in matching}
+            expected_metrics = {
+                target_banks[0]: (
+                    EXPECTED_CURRENT_FAILURE_RATE,
+                    EXPECTED_REVENUE_AT_RISK_SUBUNITS,
+                ),
+                target_banks[1]: (
+                    EXPECTED_SECONDARY_FAILURE_RATE,
+                    EXPECTED_SECONDARY_REVENUE_AT_RISK_SUBUNITS,
+                ),
+            }
+            if any(
+                incidents_by_bank.get(bank, {}).get("current_failure_rate") != failure_rate
+                or incidents_by_bank.get(bank, {}).get("revenue_at_risk_subunits") != revenue
+                for bank, (failure_rate, revenue) in expected_metrics.items()
             ):
                 time.sleep(1)
                 continue
+            ordered_incidents = sorted(
+                matching,
+                key=lambda incident: incident["revenue_at_risk_subunits"],
+                reverse=True,
+            )
+            highest_risk = ordered_incidents[0]
             return {
                 "run_id": run_id,
                 "submitted_webhooks": len(events),
                 "accepted_webhooks": accepted,
-                "incident_id": incident["incident_id"],
+                "incident_count": len(ordered_incidents),
+                "incident_id": highest_risk["incident_id"],
                 "affected_segment": {
-                    "method": incident["method"],
-                    "bank": incident["bank"],
-                    "error_reason": incident["error_reason"],
+                    "method": highest_risk["method"],
+                    "bank": highest_risk["bank"],
+                    "error_reason": highest_risk["error_reason"],
                 },
-                "baseline_failure_rate": incident["baseline_failure_rate"],
-                "current_failure_rate": incident["current_failure_rate"],
-                "revenue_at_risk_subunits": incident["revenue_at_risk_subunits"],
+                "baseline_failure_rate": highest_risk["baseline_failure_rate"],
+                "current_failure_rate": highest_risk["current_failure_rate"],
+                "revenue_at_risk_subunits": highest_risk["revenue_at_risk_subunits"],
+                "incidents": [
+                    {
+                        "incident_id": incident["incident_id"],
+                        "affected_segment": {
+                            "method": incident["method"],
+                            "bank": incident["bank"],
+                            "error_reason": incident["error_reason"],
+                        },
+                        "baseline_failure_rate": incident["baseline_failure_rate"],
+                        "current_failure_rate": incident["current_failure_rate"],
+                        "revenue_at_risk_subunits": incident["revenue_at_risk_subunits"],
+                    }
+                    for incident in ordered_incidents
+                ],
             }
         time.sleep(1)
     raise DemoLoadError(
@@ -319,7 +370,7 @@ def _request_json(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Create one persistent incident from a 150-payment demo batch."
+        description="Create two persistent incidents from a 150-payment demo batch."
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--timeout-seconds", type=int, default=90)

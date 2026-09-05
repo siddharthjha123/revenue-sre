@@ -1,5 +1,6 @@
 """Policy-gated recovery proposal and immutable approval workflow."""
 
+import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
@@ -23,14 +24,22 @@ from ..schemas.audit import ApprovalDecisionType, AuditActorType, AuditEventType
 from ..schemas.payment import PaymentStatus
 from ..schemas.recovery import (
     ProposalDecisionResponse,
+    ProposalExecutionResponse,
     RecoveryAction,
     RecoveryActionResponse,
+    RecoveryActionType,
+    RecoveryExecutionStatus,
     RecoveryPlan,
     RecoveryPlanStatus,
     RecoveryProposalCreate,
     RecoveryProposalResponse,
 )
 from .policy_engine import ProposalPolicyContext, evaluate_recovery_proposal
+from .razorpay_mcp_adapter import (
+    PaymentLinkAdapter,
+    RazorpayMCPError,
+    RazorpayMCPPaymentLinkAdapter,
+)
 
 
 class RecoveryWorkflowError(RuntimeError):
@@ -49,6 +58,10 @@ class RecoveryPolicyRejectedError(RecoveryWorkflowError):
     pass
 
 
+class RecoveryExecutionDisabledError(RecoveryWorkflowError):
+    pass
+
+
 class RecoveryService:
     """Coordinate proposal persistence, policy checks, decisions, and audit."""
 
@@ -63,6 +76,7 @@ class RecoveryService:
         incident_id: UUID,
         request: RecoveryProposalCreate,
         correlation_id: UUID,
+        generation_metadata: dict[str, int] | None = None,
     ) -> RecoveryProposalResponse:
         incident = await IncidentRepository(session).get(merchant_id, incident_id)
         if incident is None:
@@ -76,7 +90,7 @@ class RecoveryService:
                 incident_id,
                 since=now - timedelta(minutes=self._settings.recovery_proposal_cooldown_minutes),
             )
-        eligible_ids = await self._eligible_payment_ids(session, incident)
+        eligible_payments = await self._eligible_payments(session, incident)
         eligible_evidence_ids = await self._eligible_evidence_ids(session, incident)
         evidence_ids = request.evidence_ids or [UUID(value) for value in eligible_evidence_ids]
         proposal_id = uuid4()
@@ -107,7 +121,7 @@ class RecoveryService:
             plan,
             self._policy_context(
                 incident,
-                eligible_ids=eligible_ids,
+                eligible_payments=eligible_payments,
                 eligible_evidence_ids=eligible_evidence_ids,
                 cooldown_active=cooldown_active,
             ),
@@ -132,6 +146,8 @@ class RecoveryService:
             policy_version=decision.policy_version,
             policy_allowed=decision.allowed,
             policy_reasons=list(decision.reasons),
+            eligible_payment_count=len(eligible_payments),
+            omitted_payment_count=max(0, len(eligible_payments) - len(actions)),
             evidence_ids=[str(value) for value in evidence_ids],
             created_by=request.created_by,
         )
@@ -161,6 +177,7 @@ class RecoveryService:
                     "plan_hash": content_hash,
                     "total_amount_subunits": total,
                     "evidence_ids": [str(value) for value in evidence_ids],
+                    **(generation_metadata or {}),
                 },
             )
         )
@@ -199,6 +216,7 @@ class RecoveryService:
         proposal_id: UUID,
         decision: ApprovalDecisionType,
         decided_by: str,
+        reason: str | None,
         correlation_id: UUID,
     ) -> ProposalDecisionResponse:
         repository = RecoveryRepository(session)
@@ -219,13 +237,13 @@ class RecoveryService:
         if decision == ApprovalDecisionType.APPROVED:
             if proposal.status != RecoveryPlanStatus.PENDING_APPROVAL:
                 raise RecoveryConflictError("Proposal is not awaiting approval")
-            eligible_ids = await self._eligible_payment_ids(session, incident)
+            eligible_payments = await self._eligible_payments(session, incident)
             eligible_evidence_ids = await self._eligible_evidence_ids(session, incident)
             policy = evaluate_recovery_proposal(
                 self._stored_plan(proposal, actions),
                 self._policy_context(
                     incident,
-                    eligible_ids=eligible_ids,
+                    eligible_payments=eligible_payments,
                     eligible_evidence_ids=eligible_evidence_ids,
                     cooldown_active=False,
                 ),
@@ -248,6 +266,7 @@ class RecoveryService:
             proposal=proposal,
             decision=decision,
             decided_by=decided_by,
+            reason=reason,
             decided_at=decided_at,
         )
         await repository.add_audit(
@@ -259,7 +278,10 @@ class RecoveryService:
                 event_type=event_type,
                 actor_type=AuditActorType.MERCHANT,
                 actor_id=decided_by,
-                details={"plan_hash": proposal.content_hash},
+                details={
+                    "plan_hash": proposal.content_hash,
+                    "reason": reason,
+                },
             )
         )
         await session.flush()
@@ -281,9 +303,201 @@ class RecoveryService:
         actions = list(await repository.list_actions(proposal_id))
         return self._proposal_response(proposal, actions)
 
-    async def _eligible_payment_ids(
-        self, session: AsyncSession, incident: Incident
-    ) -> frozenset[str]:
+    async def execute_proposal(
+        self,
+        session: AsyncSession,
+        *,
+        merchant_id: UUID,
+        proposal_id: UUID,
+        executed_by: str,
+        correlation_id: UUID,
+        adapter: PaymentLinkAdapter | None = None,
+    ) -> ProposalExecutionResponse:
+        """Execute only approved, hash-bound Payment Link actions through Razorpay MCP."""
+
+        if not self._settings.execution_enabled:
+            raise RecoveryExecutionDisabledError("Recovery execution is disabled")
+        repository = RecoveryRepository(session)
+        proposal = await repository.get_proposal(merchant_id, proposal_id, for_update=True)
+        if proposal is None:
+            raise RecoveryNotFoundError("Recovery proposal was not found")
+        actions = list(await repository.list_actions(proposal_id))
+        if proposal_content_hash(self._stored_plan(proposal, actions)) != proposal.content_hash:
+            raise RecoveryConflictError("Proposal content no longer matches its approval hash")
+        approval = await repository.get_decision(proposal_id)
+        if approval is None or approval.decision != ApprovalDecisionType.APPROVED:
+            raise RecoveryConflictError("Proposal does not have merchant approval")
+        if approval.plan_hash != proposal.content_hash:
+            raise RecoveryConflictError("Merchant approval does not match the proposal hash")
+        if proposal.status == RecoveryPlanStatus.COMPLETED:
+            return self._execution_response(proposal, actions)
+        if proposal.status not in {RecoveryPlanStatus.APPROVED, RecoveryPlanStatus.EXECUTING}:
+            raise RecoveryConflictError("Proposal is not executable")
+        if _as_utc(proposal.expires_at) <= datetime.now(UTC):
+            raise RecoveryConflictError("Proposal has expired")
+        if any(action.action_type != RecoveryActionType.CREATE_PAYMENT_LINK for action in actions):
+            raise RecoveryConflictError("Proposal contains an unsupported execution action")
+
+        provider = adapter or self._payment_link_adapter()
+        proposal.status = RecoveryPlanStatus.EXECUTING
+        provider_unavailable = False
+        provider_success_count = 0
+        for action_index, action in enumerate(actions):
+            if action.execution_status == RecoveryExecutionStatus.SUCCEEDED:
+                continue
+            if action.execution_status == RecoveryExecutionStatus.FAILED:
+                continue
+            if provider_unavailable:
+                action.execution_status = RecoveryExecutionStatus.SKIPPED
+                action.execution_error_code = "provider_unavailable_after_failure"
+                await repository.add_audit(
+                    self._audit(
+                        merchant_id=merchant_id,
+                        correlation_id=correlation_id,
+                        incident_id=proposal.incident_id,
+                        proposal_id=proposal.id,
+                        event_type=AuditEventType.ACTION_SKIPPED,
+                        actor_type=AuditActorType.SYSTEM,
+                        actor_id=executed_by,
+                        details={
+                            "action_id": str(action.id),
+                            "reason": action.execution_error_code,
+                        },
+                    )
+                )
+                continue
+            payment = await session.scalar(
+                select(PaymentAttempt).where(
+                    PaymentAttempt.merchant_id == merchant_id,
+                    PaymentAttempt.payment_id == action.payment_id,
+                )
+            )
+            if payment is None or payment.status != PaymentStatus.FAILED:
+                action.execution_status = RecoveryExecutionStatus.SKIPPED
+                action.execution_error_code = "payment_no_longer_failed"
+                await repository.add_audit(
+                    self._audit(
+                        merchant_id=merchant_id,
+                        correlation_id=correlation_id,
+                        incident_id=proposal.incident_id,
+                        proposal_id=proposal.id,
+                        event_type=AuditEventType.ACTION_SKIPPED,
+                        actor_type=AuditActorType.SYSTEM,
+                        actor_id=executed_by,
+                        details={
+                            "action_id": str(action.id),
+                            "reason": action.execution_error_code,
+                        },
+                    )
+                )
+                continue
+
+            reference_id = f"rsre-{action.id.hex}"
+            arguments = {
+                "amount": action.amount_subunits,
+                "currency": proposal.currency,
+                "description": "Merchant-approved recovery payment",
+                "accept_partial": False,
+                "expire_by": int(_as_utc(proposal.expires_at).timestamp()),
+                "reference_id": reference_id,
+                "notify_sms": False,
+                "notify_email": False,
+                "reminder_enable": False,
+                "notes": {
+                    "revenue_sre_proposal_id": str(proposal.id),
+                    "revenue_sre_action_id": str(action.id),
+                    "revenue_sre_incident_id": str(proposal.incident_id),
+                    "original_payment_id": action.payment_id,
+                },
+            }
+            try:
+                result = await provider.create_payment_link(arguments)
+            except RazorpayMCPError:
+                # A short retry absorbs transient MCP/network failures. Reusing
+                # the immutable reference id also prevents a different link
+                # from being created if the first response was interrupted.
+                await asyncio.sleep(1)
+                try:
+                    result = await provider.create_payment_link(arguments)
+                except RazorpayMCPError:
+                    provider_unavailable = True
+                    result = None
+
+            if result is None:
+                action.execution_status = RecoveryExecutionStatus.FAILED
+                action.execution_reference_id = reference_id
+                action.execution_error_code = "razorpay_mcp_create_failed"
+                await repository.add_audit(
+                    self._audit(
+                        merchant_id=merchant_id,
+                        correlation_id=correlation_id,
+                        incident_id=proposal.incident_id,
+                        proposal_id=proposal.id,
+                        event_type=AuditEventType.ACTION_FAILED,
+                        actor_type=AuditActorType.RAZORPAY,
+                        actor_id="razorpay-mcp",
+                        details={
+                            "action_id": str(action.id),
+                            "error_code": action.execution_error_code,
+                        },
+                    )
+                )
+                continue
+
+            action.execution_status = RecoveryExecutionStatus.SUCCEEDED
+            action.execution_reference_id = result.reference_id
+            action.provider_payment_link_id = result.payment_link_id
+            action.payment_link_url = result.short_url
+            action.executed_at = datetime.now(UTC)
+            action.execution_error_code = None
+            await repository.add_audit(
+                self._audit(
+                    merchant_id=merchant_id,
+                    correlation_id=correlation_id,
+                    incident_id=proposal.incident_id,
+                    proposal_id=proposal.id,
+                    event_type=AuditEventType.ACTION_EXECUTED,
+                    actor_type=AuditActorType.RAZORPAY,
+                    actor_id="razorpay-mcp",
+                    details={
+                        "action_id": str(action.id),
+                        "payment_link_id": result.payment_link_id,
+                        "reference_id": result.reference_id,
+                        "amount_subunits": action.amount_subunits,
+                    },
+                )
+            )
+            provider_success_count += 1
+            if provider_success_count % 5 == 0 and action_index < len(actions) - 1:
+                # Razorpay's test MCP rejects a burst after five successful
+                # Payment Link creations. Let its short provider window reset
+                # before continuing the same merchant-approved plan.
+                await asyncio.sleep(5)
+
+        proposal.status = (
+            RecoveryPlanStatus.COMPLETED
+            if actions
+            and all(
+                action.execution_status == RecoveryExecutionStatus.SUCCEEDED for action in actions
+            )
+            else RecoveryPlanStatus.FAILED
+        )
+        await session.flush()
+        return self._execution_response(proposal, actions)
+
+    def _payment_link_adapter(self) -> RazorpayMCPPaymentLinkAdapter:
+        if not self._settings.razorpay_key_id or self._settings.razorpay_key_secret is None:
+            raise RecoveryExecutionDisabledError(
+                "Razorpay execution credentials are not configured"
+            )
+        return RazorpayMCPPaymentLinkAdapter(
+            url=self._settings.razorpay_mcp_url,
+            key_id=self._settings.razorpay_key_id,
+            key_secret=self._settings.razorpay_key_secret.get_secret_value(),
+            timeout_seconds=self._settings.razorpay_mcp_timeout_seconds,
+        )
+
+    async def _eligible_payments(self, session: AsyncSession, incident: Incident) -> dict[str, int]:
         evidence_payment_ids = set(
             (
                 await session.scalars(
@@ -295,6 +509,13 @@ class RecoveryService:
                     .where(
                         IncidentEvidenceRecord.merchant_id == incident.merchant_id,
                         IncidentEvidenceRecord.incident_id == incident.id,
+                        PaymentEventFact.status == PaymentStatus.FAILED,
+                        PaymentEventFact.currency == incident.currency,
+                        PaymentEventFact.method == incident.method,
+                        PaymentEventFact.bank == incident.bank,
+                        PaymentEventFact.error_reason == incident.error_reason,
+                        PaymentEventFact.provider_event_at >= incident.current_window_start,
+                        PaymentEventFact.provider_event_at <= incident.current_window_end,
                     )
                 )
             ).all()
@@ -307,9 +528,11 @@ class RecoveryService:
                 )
             )
         ).all()
-        return frozenset(
-            payment.payment_id for payment in current if payment.status == PaymentStatus.FAILED
-        )
+        return {
+            payment.payment_id: payment.amount_subunits
+            for payment in current
+            if payment.status == PaymentStatus.FAILED and payment.currency == incident.currency
+        }
 
     @staticmethod
     async def _eligible_evidence_ids(
@@ -328,7 +551,7 @@ class RecoveryService:
         self,
         incident: Incident,
         *,
-        eligible_ids: frozenset[str],
+        eligible_payments: dict[str, int],
         eligible_evidence_ids: frozenset[str],
         cooldown_active: bool,
     ) -> ProposalPolicyContext:
@@ -336,7 +559,7 @@ class RecoveryService:
             incident_status=incident.status,
             incident_currency=incident.currency,
             incident_money_at_risk_subunits=incident.revenue_at_risk_subunits,
-            eligible_payment_ids=eligible_ids,
+            eligible_payment_amounts=eligible_payments,
             eligible_evidence_ids=eligible_evidence_ids,
             maximum_plan_amount_subunits=self._settings.recovery_max_plan_amount_subunits,
             maximum_actions=self._settings.recovery_max_actions_per_plan,
@@ -392,6 +615,15 @@ class RecoveryService:
                     amount_subunits=action.amount_subunits,
                     rationale=action.rationale,
                     requires_approval=action.requires_approval,
+                    execution_status=action.execution_status,
+                    provider_payment_link_id=action.provider_payment_link_id,
+                    payment_link_url=action.payment_link_url,
+                    execution_reference_id=action.execution_reference_id,
+                    executed_at=_as_utc(action.executed_at) if action.executed_at else None,
+                    execution_error_code=action.execution_error_code,
+                    recovered_payment_id=action.recovered_payment_id,
+                    recovered_amount_subunits=action.recovered_amount_subunits,
+                    recovered_at=_as_utc(action.recovered_at) if action.recovered_at else None,
                 )
                 for action in actions
             ],
@@ -403,8 +635,44 @@ class RecoveryService:
             policy_allowed=proposal.policy_allowed,
             policy_reasons=proposal.policy_reasons,
             policy_version=proposal.policy_version,
+            eligible_payment_count=proposal.eligible_payment_count,
+            omitted_payment_count=proposal.omitted_payment_count,
             created_by=proposal.created_by,
             created_at=_as_utc(proposal.created_at),
+            action_count=len(actions),
+            maximum_recoverable_amount_subunits=proposal.total_amount_subunits,
+            stopping_conditions=[
+                "merchant_approval_required",
+                "proposal_must_not_be_expired",
+                "payment_must_still_be_failed",
+                f"maximum_actions:{len(actions)}",
+                f"maximum_amount_subunits:{proposal.total_amount_subunits}",
+                f"maximum_customer_contacts:{proposal.maximum_customer_contacts}",
+            ],
+            execution_performed=any(
+                action.execution_status == RecoveryExecutionStatus.SUCCEEDED for action in actions
+            ),
+        )
+
+    @classmethod
+    def _execution_response(
+        cls,
+        proposal: RecoveryProposal,
+        actions: list[RecoveryProposalAction],
+    ) -> ProposalExecutionResponse:
+        proposal_response = cls._proposal_response(proposal, actions)
+        return ProposalExecutionResponse(
+            proposal_id=proposal.id,
+            incident_id=proposal.incident_id,
+            status=proposal.status,
+            actions=proposal_response.actions,
+            executed_count=sum(
+                action.execution_status == RecoveryExecutionStatus.SUCCEEDED for action in actions
+            ),
+            failed_count=sum(
+                action.execution_status == RecoveryExecutionStatus.FAILED for action in actions
+            ),
+            execution_performed=proposal_response.execution_performed,
         )
 
     @staticmethod
@@ -415,6 +683,7 @@ class RecoveryService:
             incident_id=record.incident_id,
             decision=record.decision.value,
             decided_by=record.decided_by,
+            reason=record.reason,
             decided_at=_as_utc(record.decided_at),
             plan_hash=record.plan_hash,
         )

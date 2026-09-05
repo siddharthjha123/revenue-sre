@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...schemas.incident import EvidenceKind, IncidentStatus, IncidentType
 from ..models.incident import Incident, IncidentEvidenceRecord
 from ..models.payment_event_fact import PaymentEventFact
+from ..models.recovery import RecoveryProposal
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +100,14 @@ class IncidentRepository:
         )
         if incident is None:
             raise RuntimeError("Incident upsert did not resolve an incident")
-        if not created:
+        proposal_exists = (
+            await self._session.scalar(
+                select(RecoveryProposal.id)
+                .where(RecoveryProposal.incident_id == incident.id)
+                .limit(1)
+            )
+        ) is not None
+        if not created and not proposal_exists:
             for field_name in (
                 "baseline_window_start",
                 "current_window_start",

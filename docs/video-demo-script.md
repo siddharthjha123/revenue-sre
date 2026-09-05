@@ -1,5 +1,9 @@
 # Revenue SRE — Hackathon Demo Script
 
+> This original walkthrough is retained for reference. Use
+> [`final-video-script.md`](final-video-script.md) for the current two-incident,
+> approval-and-execution demonstration.
+
 Target length: **4 minutes 30 seconds**  
 Recording style: confident, fast, evidence-first, and honest about the safety boundary.
 

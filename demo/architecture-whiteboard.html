@@ -114,7 +114,7 @@
         <div class="phase-list">
           <button class="phase-button" data-phase="1"><span>1</span><div><strong>Ingest safely</strong><small>Signed webhook + durable inbox</small></div></button>
           <button class="phase-button" data-phase="2"><span>2</span><div><strong>Detect deterministically</strong><small>Normalize, segment, compare</small></div></button>
-          <button class="phase-button" data-phase="3"><span>3</span><div><strong>Investigate with AI</strong><small>TrueForge + read-only MCP</small></div></button>
+          <button class="phase-button" data-phase="3"><span>3</span><div><strong>Investigate with AI</strong><small>TrueForge + scoped MCP tools</small></div></button>
           <button class="phase-button" data-phase="4"><span>4</span><div><strong>Gate recovery</strong><small>Policy + immutable approval</small></div></button>
           <button class="phase-button" data-phase="5"><span>5</span><div><strong>Verify the outcome</strong><small>Recovered revenue + audit</small></div></button>
         </div>
@@ -138,7 +138,7 @@
                 <article class="node"><span class="icon">▤</span><strong>Exact evidence</strong><small>Payment facts + metric snapshot + audit trail</small><em>Traceable</em></article>
               </div></section>
               <section class="lane purple" data-number="3" data-phase="3"><span class="lane-label">Agent investigation</span><div class="nodes">
-                <article class="node"><span class="icon">↔</span><strong>Revenue SRE MCP</strong><small>List incidents, retrieve evidence, verify metrics</small><em>Read-only tools</em></article>
+                <article class="node"><span class="icon">↔</span><strong>Revenue SRE MCP</strong><small>List incidents, retrieve evidence, verify metrics and propose</small><em>Scoped tools</em></article>
                 <article class="node"><span class="icon">✦</span><strong>TrueForge + Qwen</strong><small>Orchestrates investigation and explains impact</small><em>AI reasoning</em></article>
                 <article class="node wide"><span class="icon">✓</span><strong>Evidence verifier</strong><small>Recomputes counts, rates and money before diagnosis</small><em>Stop on mismatch</em></article>
                 <article class="node"><span class="icon">?</span><strong>Diagnosis</strong><small>Confirmed facts separated from hypotheses</small><em>No hallucinated root cause</em></article>
@@ -147,7 +147,7 @@
                 <article class="node"><span class="icon">▥</span><strong>Bounded proposal</strong><small>Evidence-linked actions, expiry and maximum scope</small><em>Not execution</em></article>
                 <article class="node"><span class="icon">⊣</span><strong>Policy engine</strong><small>Limits, cooldown, eligibility and contact rules</small><em>Deterministic</em></article>
                 <article class="node wide"><span class="icon">☝</span><strong>Merchant approval</strong><small>Approve or reject the exact immutable plan hash</small><em>Authority boundary</em></article>
-                <article class="node"><span class="icon">🔒</span><strong>Restricted adapter</strong><small>Idempotent Razorpay test-mode action only after approval</small><em>Disabled in MVP</em></article>
+                <article class="node"><span class="icon">🔒</span><strong>Restricted adapter</strong><small>Idempotent Razorpay test-mode action only after approval</small><em>Test mode only</em></article>
               </div><div class="split-note">Conversational text can never cross this approval boundary.</div></section>
               <section class="lane red" data-number="5" data-phase="5"><span class="lane-label">Measured outcome</span><div class="nodes">
                 <article class="node"><span class="icon">↻</span><strong>Later events</strong><small>Webhook confirms subsequent payment outcome</small><em>Same durable path</em></article>
@@ -182,7 +182,7 @@
     const cues = {
       1: 'Razorpay sends a signed event. FastAPI verifies raw bytes, then atomically stores both the event and its durable processing job.',
       2: 'The worker normalizes facts. A deterministic segment detector compares the current five-minute window against the baseline and calculates money at risk.',
-      3: 'TrueForge reasons over read-only MCP evidence. Verification must pass before the agent diagnoses or recommends anything.',
+      3: 'TrueForge reasons over scoped MCP evidence tools. Deterministic verification must pass before diagnosis or a bounded proposal.',
       4: 'AI may prepare a proposal, but deterministic policy bounds it and only the merchant can approve the exact immutable plan.',
       5: 'Later payment events verify the result so the product reports actual recovered revenue and a complete audit trail.'
     };
