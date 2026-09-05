@@ -23,6 +23,7 @@ venv/
 logs/
 .runtime/
 .local/
+.pnpm-store/
 
 
 # Editors and operating systems
